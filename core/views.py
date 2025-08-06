@@ -1,3 +1,214 @@
-from django.shortcuts import render
+from rest_framework import viewsets, status, permissions
+from rest_framework.decorators import action
+from rest_framework.response import Response
+from rest_framework_simplejwt.tokens import RefreshToken
+from django.contrib.auth import authenticate
+from django.db import transaction
+from django.utils import timezone
+from .models import User, Activity, PointsLog, Incentive, Redemption, UserStatus
+from .serializers import (
+    UserSerializer, ActivitySerializer, PointsLogSerializer,
+    IncentiveSerializer, RedemptionSerializer, UserStatusSerializer
+)
 
-# Create your views here.
+class UserViewSet(viewsets.ModelViewSet):
+    queryset = User.objects.all()
+    serializer_class = UserSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    
+    @action(detail=False, methods=['post'], permission_classes=[permissions.AllowAny])
+    def register(self, request):
+        """Register a new user"""
+        serializer = self.get_serializer(data=request.data)
+        if serializer.is_valid():
+            user = serializer.save()
+            user.set_password(request.data.get('password'))
+            user.save()
+            
+            # Create user status
+            UserStatus.objects.create(user=user)
+            
+            # Generate tokens
+            refresh = RefreshToken.for_user(user)
+            return Response({
+                'user': serializer.data,
+                'tokens': {
+                    'refresh': str(refresh),
+                    'access': str(refresh.access_token),
+                }
+            }, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+    @action(detail=False, methods=['post'], permission_classes=[permissions.AllowAny])
+    def login(self, request):
+        """Login user"""
+        username = request.data.get('username')
+        password = request.data.get('password')
+        
+        user = authenticate(username=username, password=password)
+        if user:
+            refresh = RefreshToken.for_user(user)
+            serializer = self.get_serializer(user)
+            return Response({
+                'user': serializer.data,
+                'tokens': {
+                    'refresh': str(refresh),
+                    'access': str(refresh.access_token),
+                }
+            })
+        return Response({'error': 'Invalid credentials'}, status=status.HTTP_401_UNAUTHORIZED)
+    
+    @action(detail=False, methods=['get'])
+    def profile(self, request):
+        """Get current user profile"""
+        serializer = self.get_serializer(request.user)
+        return Response(serializer.data)
+    
+    @action(detail=True, methods=['post'])
+    def add_points(self, request, pk=None):
+        """Add points to a user for an activity"""
+        user = self.get_object()
+        activity_type = request.data.get('activity_type')
+        details = request.data.get('details', '')
+        
+        try:
+            activity = Activity.objects.get(activity_type=activity_type, is_active=True)
+            
+            with transaction.atomic():
+                # Create points log entry
+                points_log = PointsLog.objects.create(
+                    user=user,
+                    activity=activity,
+                    points_earned=activity.points_value,
+                    details=details
+                )
+                
+                # Update user's total points
+                user.total_points += activity.points_value
+                user.save()
+                
+                # Update user status last activity
+                user_status, created = UserStatus.objects.get_or_create(user=user)
+                user_status.last_activity = timezone.now()
+                user_status.save()
+            
+            return Response({
+                'message': f'Added {activity.points_value} points for {activity.name}',
+                'total_points': user.total_points,
+                'points_log': PointsLogSerializer(points_log).data
+            })
+            
+        except Activity.DoesNotExist:
+            return Response({'error': 'Activity not found'}, status=status.HTTP_404_NOT_FOUND)
+
+class ActivityViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = Activity.objects.filter(is_active=True)
+    serializer_class = ActivitySerializer
+    permission_classes = [permissions.AllowAny]
+
+class PointsLogViewSet(viewsets.ReadOnlyModelViewSet):
+    serializer_class = PointsLogSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_queryset(self):
+        """Users can only see their own points logs"""
+        if self.request.user.role == 'admin':
+            return PointsLog.objects.all()
+        return PointsLog.objects.filter(user=self.request.user)
+
+class IncentiveViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = Incentive.objects.filter(is_active=True)
+    serializer_class = IncentiveSerializer
+    permission_classes = [permissions.AllowAny]
+
+class RedemptionViewSet(viewsets.ModelViewSet):
+    serializer_class = RedemptionSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_queryset(self):
+        """Users can only see their own redemptions, admins see all"""
+        if self.request.user.role == 'admin':
+            return Redemption.objects.all()
+        return Redemption.objects.filter(user=self.request.user)
+    
+    @action(detail=False, methods=['post'])
+    def redeem(self, request):
+        """Redeem an incentive"""
+        incentive_id = request.data.get('incentive_id')
+        
+        try:
+            incentive = Incentive.objects.get(id=incentive_id, is_active=True)
+            user = request.user
+            
+            # Check if user has enough points
+            if user.total_points < incentive.points_required:
+                return Response({
+                    'error': f'Insufficient points. Required: {incentive.points_required}, Available: {user.total_points}'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            with transaction.atomic():
+                # Create redemption
+                redemption = Redemption.objects.create(
+                    user=user,
+                    incentive=incentive,
+                    points_spent=incentive.points_required
+                )
+                
+                # Deduct points from user
+                user.total_points -= incentive.points_required
+                user.save()
+            
+            return Response({
+                'message': f'Successfully redeemed {incentive.name}',
+                'redemption': RedemptionSerializer(redemption).data,
+                'remaining_points': user.total_points
+            })
+            
+        except Incentive.DoesNotExist:
+            return Response({'error': 'Incentive not found'}, status=status.HTTP_404_NOT_FOUND)
+    
+    @action(detail=True, methods=['post'])
+    def approve(self, request, pk=None):
+        """Approve a redemption (admin only)"""
+        if request.user.role != 'admin':
+            return Response({'error': 'Admin access required'}, status=status.HTTP_403_FORBIDDEN)
+        
+        redemption = self.get_object()
+        redemption.status = 'approved'
+        redemption.processed_at = timezone.now()
+        redemption.admin_notes = request.data.get('notes', '')
+        redemption.save()
+        
+        return Response({'message': 'Redemption approved'})
+    
+    @action(detail=True, methods=['post'])
+    def reject(self, request, pk=None):
+        """Reject a redemption (admin only)"""
+        if request.user.role != 'admin':
+            return Response({'error': 'Admin access required'}, status=status.HTTP_403_FORBIDDEN)
+        
+        redemption = self.get_object()
+        
+        with transaction.atomic():
+            # Refund points to user
+            user = redemption.user
+            user.total_points += redemption.points_spent
+            user.save()
+            
+            # Update redemption status
+            redemption.status = 'rejected'
+            redemption.processed_at = timezone.now()
+            redemption.admin_notes = request.data.get('notes', '')
+            redemption.save()
+        
+        return Response({'message': 'Redemption rejected and points refunded'})
+
+class UserStatusViewSet(viewsets.ReadOnlyModelViewSet):
+    serializer_class = UserStatusSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_queryset(self):
+        """Users can only see their own status, admins see all"""
+        if self.request.user.role == 'admin':
+            return UserStatus.objects.all()
+        return UserStatus.objects.filter(user=self.request.user)
