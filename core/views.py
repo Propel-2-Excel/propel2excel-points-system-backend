@@ -6,10 +6,10 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import authenticate
 from django.db import transaction
 from django.utils import timezone
-from .models import User, Activity, PointsLog, Incentive, Redemption, UserStatus
+from .models import User, Activity, PointsLog, Incentive, Redemption, UserStatus, UserIncentiveUnlock, DiscordLinkCode
 from .serializers import (
     UserSerializer, ActivitySerializer, PointsLogSerializer,
-    IncentiveSerializer, RedemptionSerializer, UserStatusSerializer
+    IncentiveSerializer, RedemptionSerializer, UserStatusSerializer, DiscordLinkCodeSerializer
 )
 
 class UserViewSet(viewsets.ModelViewSet):
@@ -121,6 +121,11 @@ class IncentiveViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = Incentive.objects.filter(is_active=True)
     serializer_class = IncentiveSerializer
     permission_classes = [permissions.AllowAny]
+
+    def get_serializer_context(self):
+        ctx = super().get_serializer_context()
+        ctx['request'] = self.request
+        return ctx
 
 class RedemptionViewSet(viewsets.ModelViewSet):
     serializer_class = RedemptionSerializer
@@ -238,6 +243,8 @@ class BotIntegrationView(APIView):
             return self._upsert_user(request)
         if action == "add-activity":
             return self._add_activity(request)
+        if action == "link":
+            return self._link_discord(request)
 
         return Response({"error": "Unknown action"}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -298,8 +305,72 @@ class BotIntegrationView(APIView):
             user_status.last_activity = timezone.now()
             user_status.save(update_fields=["last_activity"])
 
+        # Check for unlocks after commit
+        self._check_and_record_unlocks(user)
+
         return Response({
             "message": f"Added {activity.points_value} points for {activity.name}",
             "total_points": user.total_points,
             "points_log_id": points_log.id,
         })
+
+    def _link_discord(self, request):
+        code = request.data.get("code")
+        discord_id = request.data.get("discord_id")
+        if not code or not discord_id:
+            return Response({"error": "code and discord_id are required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Use a transaction for select_for_update to avoid DB errors under autocommit
+        with transaction.atomic():
+            try:
+                link = DiscordLinkCode.objects.select_for_update().get(code=code)
+            except DiscordLinkCode.DoesNotExist:
+                return Response({"error": "Invalid code"}, status=status.HTTP_404_NOT_FOUND)
+
+            if link.used_at:
+                return Response({"error": "Code already used"}, status=status.HTTP_400_BAD_REQUEST)
+            if timezone.now() > link.expires_at:
+                return Response({"error": "Code expired"}, status=status.HTTP_400_BAD_REQUEST)
+
+            user = link.user
+            user.discord_id = str(discord_id)
+            user.save(update_fields=["discord_id"])
+            link.used_at = timezone.now()
+            link.save(update_fields=["used_at"])
+
+        return Response({"linked": True, "discord_id": str(discord_id)})
+
+
+class LinkView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        """Start linking: issue a 6-digit code valid for 10 minutes."""
+        from random import randint
+        from datetime import timedelta
+
+        # invalidate previous unused codes for this user
+        DiscordLinkCode.objects.filter(user=request.user, used_at__isnull=True).delete()
+
+        # generate 6-digit code
+        code = f"{randint(0, 999999):06d}"
+        expires_at = timezone.now() + timedelta(minutes=10)
+        link = DiscordLinkCode.objects.create(user=request.user, code=code, expires_at=expires_at)
+        return Response(DiscordLinkCodeSerializer(link).data)
+
+    def get(self, request):
+        """Link status for current user."""
+        return Response({
+            "linked": bool(request.user.discord_id),
+            "discord_id": request.user.discord_id,
+        })
+
+    def _check_and_record_unlocks(self, user: User):
+        """Create UserIncentiveUnlock records for any incentives the user just qualified for.
+        Idempotent: uses unique_together to avoid duplicates.
+        """
+        qualifying = Incentive.objects.filter(is_active=True, points_required__lte=user.total_points)
+        existing = set(UserIncentiveUnlock.objects.filter(user=user, incentive__in=qualifying).values_list('incentive_id', flat=True))
+        to_create = [UserIncentiveUnlock(user=user, incentive=inc) for inc in qualifying if inc.id not in existing]
+        if to_create:
+            UserIncentiveUnlock.objects.bulk_create(to_create, ignore_conflicts=True)

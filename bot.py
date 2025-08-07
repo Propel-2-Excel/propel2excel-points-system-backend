@@ -10,6 +10,7 @@ from datetime import datetime
 import math
 import aiohttp
 import json
+
 # Set up logging
 logging.basicConfig(
     level=logging.INFO,
@@ -560,6 +561,51 @@ async def help(ctx):
     except Exception as e:
         logger.error(f"Error in help command: {e}")
         await ctx.send("❌ An error occurred while processing the help command.")
+
+
+@bot.command()
+async def link(ctx, code: str = None):
+    """Link your Discord account to your website account using a 6-digit code."""
+    if not code or len(code) != 6 or not code.isdigit():
+        await ctx.send("Usage: `!link <6-digit code>`\nGet your code from the website profile page.")
+        return
+    try:
+        async with aiohttp.ClientSession() as session:
+            payload = {
+                "action": "link",
+                "code": code,
+                "discord_id": str(ctx.author.id),
+            }
+            async with session.post(
+                f"{BACKEND_API_URL}/api/bot/",
+                json=payload,
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Bot-Secret": BOT_SHARED_SECRET,
+                }
+            ) as response:
+                if response.status == 200:
+                    await ctx.send("✅ Successfully linked your Discord to your website account.")
+                else:
+                    raw = await response.text()
+                    # Log full backend error for diagnostics
+                    logger.error(f"Link failed ({response.status}): {raw[:4000]}")
+                    # Try to show a concise message to user without exceeding Discord limits
+                    short_msg = None
+                    try:
+                        data = json.loads(raw)
+                        short_msg = data.get('error') or data
+                    except Exception:
+                        pass
+                    if not short_msg:
+                        short_msg = f"status {response.status}"
+                    # Ensure under 1800 chars to be safe
+                    short = str(short_msg)
+                    if len(short) > 1800:
+                        short = short[:1800] + "…"
+                    await ctx.send(f"❌ Linking failed: {short}")
+    except Exception as e:
+        await ctx.send(f"❌ Linking error: {e}")
 
 
 @bot.command()
