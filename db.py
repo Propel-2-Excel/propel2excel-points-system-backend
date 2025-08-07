@@ -48,6 +48,26 @@ def setup():
         suspension_end DATETIME,
         last_activity DATETIME DEFAULT CURRENT_TIMESTAMP
     )''')
+    # Milestone achievements
+    c.execute('''CREATE TABLE IF NOT EXISTS milestone_achievements (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id TEXT,
+        milestone_name TEXT,
+        points_required INTEGER,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+    )''')
+    # Resource submissions
+    c.execute('''CREATE TABLE IF NOT EXISTS resource_submissions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id TEXT,
+        resource_description TEXT,
+        status TEXT,
+        points_awarded INTEGER,
+        reviewed_by TEXT,
+        review_notes TEXT,
+        submitted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        reviewed_at DATETIME
+    )''')
     conn.commit()
     conn.close()
 
