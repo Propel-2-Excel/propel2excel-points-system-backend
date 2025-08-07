@@ -4,6 +4,8 @@ import discord
 import asyncio
 from datetime import datetime, timedelta
 import re
+import aiohttp
+import os
 
 # Milestone definitions for incentives
 MILESTONES = {
@@ -44,7 +46,6 @@ class Points(commands.Cog):
     async def sync_points_with_backend(self, user_id, pts, action):
         """Sync points with backend API"""
         try:
-            # Import the function from bot.py
             from bot import update_user_points_in_backend
             await update_user_points_in_backend(user_id, pts, action)
         except Exception as e:

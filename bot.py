@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
 BACKEND_API_URL = os.getenv('BACKEND_API_URL', 'http://localhost:8000')  # Default backend URL
+BOT_SHARED_SECRET = os.getenv('BOT_SHARED_SECRET', '')
 
 if not TOKEN:
     logger.error("❌ DISCORD_TOKEN not found in .env file!")
@@ -37,6 +38,7 @@ intents.reactions = True
 intents.members = True
 
 bot = commands.Bot(command_prefix='!', intents=intents, help_command=None)
+bot.start_time = datetime.utcnow()
 
 # Global variables
 cogs_loaded = False
@@ -48,18 +50,21 @@ async def register_user_with_backend(discord_id: str, display_name: str, usernam
     try:
         async with aiohttp.ClientSession() as session:
             payload = {
+                "action": "upsert-user",
                 "discord_id": discord_id,
                 "display_name": display_name,
                 "username": username,
-                "joined_at": datetime.utcnow().isoformat()
             }
             
             async with session.post(
-                f"{BACKEND_API_URL}/api/users/register/",
+                f"{BACKEND_API_URL}/api/bot/",
                 json=payload,
-                headers={"Content-Type": "application/json"}
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Bot-Secret": BOT_SHARED_SECRET,
+                }
             ) as response:
-                if response.status == 201:
+                if response.status in (200, 201):
                     logger.info(f"✅ Successfully registered user {display_name} ({discord_id}) with backend")
                     return True
                 elif response.status == 409:
@@ -78,16 +83,32 @@ async def update_user_points_in_backend(discord_id: str, points: int, action: st
     """Update user points in the backend API"""
     try:
         async with aiohttp.ClientSession() as session:
+            # Map free-form actions to Activity.activity_type values
+            action_map = {
+                "Message sent": "discord_activity",
+                "Liking/interacting": "like_interaction",
+                "Resume upload": "resume_upload",
+                "Event attendance": "event_attendance",
+                "LinkedIn update": "linkedin_post",
+            }
+            activity_type = action_map.get(action)
+            if activity_type is None:
+                activity_type = "discord_activity"
+
             payload = {
-                "points": points,
-                "action": action,
-                "timestamp": datetime.utcnow().isoformat()
+                "action": "add-activity",
+                "discord_id": discord_id,
+                "activity_type": activity_type,
+                "details": action,
             }
             
             async with session.post(
-                f"{BACKEND_API_URL}/api/users/{discord_id}/add-points/",
+                f"{BACKEND_API_URL}/api/bot/",
                 json=payload,
-                headers={"Content-Type": "application/json"}
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Bot-Secret": BOT_SHARED_SECRET,
+                }
             ) as response:
                 if response.status == 200:
                     logger.info(f"✅ Successfully updated points for user {discord_id} in backend")
@@ -109,6 +130,7 @@ async def load_cogs():
         return []
     
     loaded_cogs = []
+    os.makedirs('cogs', exist_ok=True)
     cog_files = [f for f in os.listdir('./cogs') if f.endswith('.py')]
     
     for filename in cog_files:

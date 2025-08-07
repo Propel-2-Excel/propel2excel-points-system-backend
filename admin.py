@@ -2,6 +2,7 @@ from discord.ext import commands
 import db
 import discord
 from datetime import datetime, timedelta
+import asyncio
 
 class Admin(commands.Cog):
     def __init__(self, bot):
@@ -14,6 +15,12 @@ class Admin(commands.Cog):
         c.execute('UPDATE users SET points = points + ? WHERE user_id = ?', (pts, user_id))
         conn.commit()
         conn.close()
+        # Optionally sync to backend if available
+        try:
+            from bot import update_user_points_in_backend
+            asyncio.create_task(update_user_points_in_backend(user_id, int(pts), "Admin adjustment"))
+        except Exception:
+            pass
 
     @commands.command()
     @commands.has_permissions(administrator=True)

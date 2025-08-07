@@ -1,6 +1,7 @@
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import authenticate
 from django.db import transaction
@@ -212,3 +213,93 @@ class UserStatusViewSet(viewsets.ReadOnlyModelViewSet):
         if self.request.user.role == 'admin':
             return UserStatus.objects.all()
         return UserStatus.objects.filter(user=self.request.user)
+
+
+class BotIntegrationView(APIView):
+    """Minimal secured endpoints for Discord bot integration.
+
+    Security: requires X-Bot-Secret header that matches settings.BOT_SHARED_SECRET.
+    Supported actions via JSON body:
+      - { "action": "upsert-user", "discord_id": str, "display_name"?: str, "username"?: str }
+      - { "action": "add-activity", "discord_id": str, "activity_type": str, "details"?: str }
+    """
+
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        from django.conf import settings
+
+        shared_secret = request.headers.get("X-Bot-Secret", "")
+        if not settings.BOT_SHARED_SECRET or shared_secret != settings.BOT_SHARED_SECRET:
+            return Response({"error": "Unauthorized"}, status=status.HTTP_401_UNAUTHORIZED)
+
+        action = request.data.get("action")
+        if action == "upsert-user":
+            return self._upsert_user(request)
+        if action == "add-activity":
+            return self._add_activity(request)
+
+        return Response({"error": "Unknown action"}, status=status.HTTP_400_BAD_REQUEST)
+
+    def _upsert_user(self, request):
+        discord_id = request.data.get("discord_id")
+        display_name = request.data.get("display_name") or ""
+        username = request.data.get("username") or (display_name or f"discord_{discord_id}")
+
+        if not discord_id:
+            return Response({"error": "discord_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        user, created = User.objects.get_or_create(
+            discord_id=str(discord_id),
+            defaults={
+                "username": username[:150] or f"discord_{discord_id}",
+                "role": "student",
+            },
+        )
+
+        if created:
+            # Ensure status row exists
+            UserStatus.objects.get_or_create(user=user)
+
+        return Response({
+            "user_id": user.id,
+            "created": created,
+            "username": user.username,
+        }, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
+    def _add_activity(self, request):
+        discord_id = request.data.get("discord_id")
+        activity_type = request.data.get("activity_type")
+        details = request.data.get("details", "")
+
+        if not discord_id or not activity_type:
+            return Response({"error": "discord_id and activity_type are required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            user = User.objects.get(discord_id=str(discord_id))
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            activity = Activity.objects.get(activity_type=activity_type, is_active=True)
+        except Activity.DoesNotExist:
+            return Response({"error": "Activity not found"}, status=status.HTTP_404_NOT_FOUND)
+
+        with transaction.atomic():
+            points_log = PointsLog.objects.create(
+                user=user,
+                activity=activity,
+                points_earned=activity.points_value,
+                details=details,
+            )
+            user.total_points += activity.points_value
+            user.save(update_fields=["total_points"])
+            user_status, _ = UserStatus.objects.get_or_create(user=user)
+            user_status.last_activity = timezone.now()
+            user_status.save(update_fields=["last_activity"])
+
+        return Response({
+            "message": f"Added {activity.points_value} points for {activity.name}",
+            "total_points": user.total_points,
+            "points_log_id": points_log.id,
+        })
