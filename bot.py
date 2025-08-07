@@ -27,10 +27,6 @@ TOKEN = os.getenv('DISCORD_TOKEN')
 BACKEND_API_URL = os.getenv('BACKEND_API_URL', 'http://localhost:8000')  # Default backend URL
 BOT_SHARED_SECRET = os.getenv('BOT_SHARED_SECRET', '')
 
-if not TOKEN:
-    logger.error("❌ DISCORD_TOKEN not found in .env file!")
-    sys.exit(1)
-
 # Bot setup
 intents = discord.Intents.default()
 intents.message_content = True
@@ -131,7 +127,7 @@ async def load_cogs():
     
     loaded_cogs = []
     os.makedirs('cogs', exist_ok=True)
-    cog_files = [f for f in os.listdir('./cogs') if f.endswith('.py')]
+    cog_files = [f for f in os.listdir('./cogs') if f.endswith('.py') and f != '__init__.py']
     
     for filename in cog_files:
         cog_name = filename[:-3]

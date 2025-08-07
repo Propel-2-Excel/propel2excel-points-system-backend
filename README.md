@@ -58,11 +58,15 @@ A career-focused Discord bot that motivates and rewards student achievement thro
    ```
 
 4. **Set up environment variables**
-   ```bash
-   # Create .env file
-   echo "SECRET_KEY=django-insecure-your-secret-key-here-change-in-production
+   Create a `.env` using the keys below (never commit real secrets):
+   ```env
+   SECRET_KEY=django-insecure-change-me
    DEBUG=True
-   DATABASE_URL=sqlite:///p2e.db" > .env
+   DATABASE_URL=postgresql://<user>:<password>@<host>:5432/<db>
+   # Bot integration
+   DISCORD_TOKEN=
+   BACKEND_API_URL=http://127.0.0.1:8000
+   BOT_SHARED_SECRET=
    ```
 
 5. **Run migrations**
@@ -108,10 +112,11 @@ Visit `/api/docs/` for interactive Swagger documentation.
 
 ## 🎮 Discord Bot Setup
 
-1. Create a Discord application and bot
-2. Get your bot token
-3. Add bot token to environment variables
-4. Run the Discord bot (coming soon)
+1. Create a Discord application and bot (enable Message Content + Server Members intents)
+2. Put the token in `.env` as `DISCORD_TOKEN`
+3. Start backend: `python manage.py runserver`
+4. Start bot: `python bot.py`
+5. The bot posts activities to `/api/bot` using `X-Bot-Secret`
 
 ## 🗄️ Database Schema
 
