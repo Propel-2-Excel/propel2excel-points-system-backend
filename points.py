@@ -1,9 +1,10 @@
 from discord.ext import commands
-import db  # your database module for connection and setup
 import discord
 import asyncio
 from datetime import datetime, timedelta
 import re
+import aiohttp
+import os
 
 # Milestone definitions for incentives
 MILESTONES = {
@@ -18,62 +19,80 @@ class Points(commands.Cog):
         self.processed_messages = set()  # Track processed messages to prevent duplicates
 
     def add_points(self, user_id, pts, action):
+        """Forward all point awards to backend; no local DB writes."""
         try:
-            conn = db.connect()
-            c = conn.cursor()
-            c.execute('INSERT OR IGNORE INTO users (user_id, points) VALUES (?, ?)', (user_id, 0))
-            c.execute('UPDATE users SET points = points + ? WHERE user_id = ?', (pts, user_id))
-            c.execute('INSERT INTO points_log(user_id, action, points) VALUES (?, ?, ?)', (user_id, action, pts))
-            
-            # Get updated total points
-            c.execute('SELECT points FROM users WHERE user_id = ?', (user_id,))
-            total_points = c.fetchone()[0]
-            
-            conn.commit()
-            conn.close()
-            
-            # Sync with backend API asynchronously
             asyncio.create_task(self.sync_points_with_backend(user_id, pts, action))
-            
-            # Check for milestones asynchronously
-            asyncio.create_task(self.check_milestones(user_id, total_points))
-            
         except Exception as e:
             print(f"Error adding points: {e}")
 
     async def sync_points_with_backend(self, user_id, pts, action):
         """Sync points with backend API"""
         try:
-            # Import the function from bot.py
             from bot import update_user_points_in_backend
             await update_user_points_in_backend(user_id, pts, action)
         except Exception as e:
             print(f"Error syncing points with backend: {e}")
+    
+    async def fetch_user_total_points(self, discord_id: str) -> int:
+        """Fetch user's total points from backend via /api/bot summary."""
+        try:
+            from bot import BACKEND_API_URL, BOT_SHARED_SECRET
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{BACKEND_API_URL}/api/bot/",
+                    json={"action": "summary", "discord_id": discord_id, "limit": 1},
+                    headers={"Content-Type": "application/json", "X-Bot-Secret": BOT_SHARED_SECRET},
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        return int(data.get("total_points", 0))
+        except Exception:
+            pass
+        return 0
+
+    async def fetch_user_recent_logs(self, discord_id: str):
+        try:
+            from bot import BACKEND_API_URL, BOT_SHARED_SECRET
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{BACKEND_API_URL}/api/bot/",
+                    json={"action": "summary", "discord_id": discord_id, "limit": 10},
+                    headers={"Content-Type": "application/json", "X-Bot-Secret": BOT_SHARED_SECRET},
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        logs = data.get("recent_logs", [])
+                        # Return tuples (action, pts, ts) to match embed usage
+                        return [(item.get("action"), item.get("points", 0), item.get("timestamp", "")) for item in logs]
+        except Exception:
+            pass
+        return []
+
+    async def fetch_user_milestones(self, discord_id: str):
+        try:
+            from bot import BACKEND_API_URL, BOT_SHARED_SECRET
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{BACKEND_API_URL}/api/bot/",
+                    json={"action": "summary", "discord_id": discord_id, "limit": 1},
+                    headers={"Content-Type": "application/json", "X-Bot-Secret": BOT_SHARED_SECRET},
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        current_points = int(data.get("total_points", 0))
+                        unlocks = data.get("unlocks", [])
+                        achieved = [item.get("name") for item in unlocks]
+                        return current_points, achieved
+        except Exception:
+            pass
+        return 0, []
 
     async def check_milestones(self, user_id, total_points):
-        """Check if user has reached any new milestones and send congratulatory DMs"""
+        """Send congratulatory DM when thresholds crossed (no local DB)."""
         try:
-            conn = db.connect()
-            c = conn.cursor()
-            
-            # Check each milestone threshold
             for points_required, milestone_name in MILESTONES.items():
                 if total_points >= points_required:
-                    # Check if this milestone was already achieved
-                    c.execute('SELECT id FROM milestone_achievements WHERE user_id = ? AND milestone_name = ?', 
-                             (user_id, milestone_name))
-                    
-                    if not c.fetchone():
-                        # New milestone achieved!
-                        c.execute('INSERT INTO milestone_achievements (user_id, milestone_name, points_required) VALUES (?, ?, ?)',
-                                 (user_id, milestone_name, points_required))
-                        conn.commit()
-                        
-                        # Send congratulatory DM
-                        await self.send_milestone_dm(user_id, milestone_name, points_required)
-            
-            conn.close()
-            
+                    await self.send_milestone_dm(user_id, milestone_name, points_required)
         except Exception as e:
             print(f"Error checking milestones: {e}")
 
@@ -155,19 +174,13 @@ class Points(commands.Cog):
     @commands.cooldown(1, 3, commands.BucketType.user)  # 1 use per 3 seconds per user
     async def points(self, ctx):
         try:
-            conn = db.connect()
-            c = conn.cursor()
-            c.execute('SELECT points FROM users WHERE user_id = ?', (str(ctx.author.id),))
-            data = c.fetchone()
-            pts = data[0] if data else 0
-            conn.close()
-            
+            total = await self.fetch_user_total_points(str(ctx.author.id))
             embed = discord.Embed(
                 title="💰 Points Status",
                 description=f"{ctx.author.mention}'s point information",
                 color=0x00ff00
             )
-            embed.add_field(name="Current Points", value=f"**{pts}** points", inline=True)
+            embed.add_field(name="Current Points", value=f"**{total}** points", inline=True)
             embed.add_field(name="Status", value="✅ Good standing", inline=True)
             
             await ctx.send(embed=embed)
@@ -180,11 +193,7 @@ class Points(commands.Cog):
     @commands.cooldown(1, 5, commands.BucketType.user)  # 1 use per 5 seconds per user
     async def pointshistory(self, ctx):
         try:
-            conn = db.connect()
-            c = conn.cursor()
-            c.execute('SELECT action, points, timestamp FROM points_log WHERE user_id = ? ORDER BY timestamp DESC LIMIT 10', (str(ctx.author.id),))
-            rows = c.fetchall()
-            conn.close()
+            rows = await self.fetch_user_recent_logs(str(ctx.author.id))
             
             if not rows:
                 await ctx.send(f"{ctx.author.mention}, you have no point activity yet.")
@@ -251,15 +260,7 @@ class Points(commands.Cog):
                 await ctx.send("❌ Please provide a detailed description of your resource (at least 10 characters).\n\n**Usage:** `!resource <description of the resource you want to share>`")
                 return
             
-            # Store the resource submission in database
-            conn = db.connect()
-            c = conn.cursor()
-            c.execute('''
-                INSERT INTO resource_submissions (user_id, resource_description, status)
-                VALUES (?, ?, 'pending')
-            ''', (str(ctx.author.id), description.strip()))
-            conn.commit()
-            conn.close()
+            # For MVP, do not persist local resource submissions; just notify admins
             
             # Create submission confirmation embed
             embed = discord.Embed(
@@ -398,19 +399,7 @@ class Points(commands.Cog):
     async def milestones(self, ctx):
         """Show available milestones and user's progress"""
         try:
-            conn = db.connect()
-            c = conn.cursor()
-            
-            # Get user's current points
-            c.execute('SELECT points FROM users WHERE user_id = ?', (str(ctx.author.id),))
-            data = c.fetchone()
-            current_points = data[0] if data else 0
-            
-            # Get user's achieved milestones
-            c.execute('SELECT milestone_name FROM milestone_achievements WHERE user_id = ?', (str(ctx.author.id),))
-            achieved_milestones = [row[0] for row in c.fetchall()]
-            
-            conn.close()
+            current_points, achieved_milestones = await self.fetch_user_milestones(str(ctx.author.id))
             
             embed = discord.Embed(
                 title="🏆 Available Incentives & Milestones",
@@ -449,13 +438,7 @@ class Points(commands.Cog):
         try:
             target_user = user or ctx.author
             user_id = str(target_user.id)
-            
-            conn = db.connect()
-            c = conn.cursor()
-            c.execute('SELECT points FROM users WHERE user_id = ?', (user_id,))
-            data = c.fetchone()
-            current_points = data[0] if data else 0
-            conn.close()
+            current_points = await self.fetch_user_total_points(user_id)
             
             await self.check_milestones(user_id, current_points)
             
@@ -477,40 +460,12 @@ class Points(commands.Cog):
     async def approveresource(self, ctx, user_id: str, points: int, *, notes: str = ""):
         """Approve a resource submission and award points"""
         try:
-            conn = db.connect()
-            c = conn.cursor()
-            
-            # Find the most recent pending submission for this user
-            c.execute('''
-                SELECT id, resource_description, submitted_at 
-                FROM resource_submissions 
-                WHERE user_id = ? AND status = 'pending' 
-                ORDER BY submitted_at DESC 
-                LIMIT 1
-            ''', (user_id,))
-            
-            submission = c.fetchone()
-            
+            submission = None  # backend workflow not implemented yet
             if not submission:
                 await ctx.send(f"❌ No pending resource submissions found for user ID: {user_id}")
-                conn.close()
                 return
-            
-            submission_id, description, submitted_at = submission
-            
-            # Update the submission status
-            c.execute('''
-                UPDATE resource_submissions 
-                SET status = 'approved', reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP, 
-                    points_awarded = ?, review_notes = ?
-                WHERE id = ?
-            ''', (str(ctx.author.id), points, notes, submission_id))
-            
-            # Award points to the user
+            # Award via backend
             self.add_points(user_id, points, f"Resource share approved by {ctx.author.display_name}")
-            
-            conn.commit()
-            conn.close()
             
             # Create approval embed
             embed = discord.Embed(
@@ -564,37 +519,10 @@ class Points(commands.Cog):
     async def rejectresource(self, ctx, user_id: str, *, reason: str = "No reason provided"):
         """Reject a resource submission"""
         try:
-            conn = db.connect()
-            c = conn.cursor()
-            
-            # Find the most recent pending submission for this user
-            c.execute('''
-                SELECT id, resource_description, submitted_at 
-                FROM resource_submissions 
-                WHERE user_id = ? AND status = 'pending' 
-                ORDER BY submitted_at DESC 
-                LIMIT 1
-            ''', (user_id,))
-            
-            submission = c.fetchone()
-            
+            submission = None
             if not submission:
                 await ctx.send(f"❌ No pending resource submissions found for user_id: {user_id}")
-                conn.close()
                 return
-            
-            submission_id, description, submitted_at = submission
-            
-            # Update the submission status
-            c.execute('''
-                UPDATE resource_submissions 
-                SET status = 'rejected', reviewed_by = ?, reviewed_at = CURRENT_TIMESTAMP, 
-                    review_notes = ?
-                WHERE id = ?
-            ''', (str(ctx.author.id), reason, submission_id))
-            
-            conn.commit()
-            conn.close()
             
             # Create rejection embed
             embed = discord.Embed(
@@ -641,18 +569,7 @@ class Points(commands.Cog):
     async def pendingresources(self, ctx):
         """Show all pending resource submissions"""
         try:
-            conn = db.connect()
-            c = conn.cursor()
-            
-            c.execute('''
-                SELECT rs.user_id, rs.resource_description, rs.submitted_at, rs.id
-                FROM resource_submissions rs
-                WHERE rs.status = 'pending'
-                ORDER BY rs.submitted_at DESC
-            ''')
-            
-            submissions = c.fetchall()
-            conn.close()
+            submissions = []  # not yet implemented
             
             if not submissions:
                 await ctx.send("✅ No pending resource submissions!")

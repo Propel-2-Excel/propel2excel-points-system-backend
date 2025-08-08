@@ -1,5 +1,5 @@
 from discord.ext import commands
-import db
+import aiohttp
 
 class Shop(commands.Cog):
     def __init__(self, bot):
@@ -7,49 +7,43 @@ class Shop(commands.Cog):
 
     @commands.command()
     async def shop(self, ctx):
-        conn = db.connect()
-        c = conn.cursor()
-        c.execute('SELECT id, name, cost FROM rewards ORDER BY cost')
-        rewards = c.fetchall()
-        if not rewards:
-            await ctx.send("The shop is currently empty!")
-            return
-        msg = "**Available Rewards:**\n"
-        for r_id, name, cost in rewards:
-            msg += f"{r_id}. {name} — {cost} points\n"
-        msg += "\nUse `!redeem <reward id>` to redeem a reward."
-        await ctx.send(msg)
+        try:
+            from bot import BACKEND_API_URL
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f"{BACKEND_API_URL}/api/incentives/") as resp:
+                    if resp.status != 200:
+                        await ctx.send("❌ Failed to fetch shop items.")
+                        return
+                    data = await resp.json()
+                    if not data:
+                        await ctx.send("The shop is currently empty!")
+                        return
+                    msg = "**Available Incentives:**\n"
+                    for item in data:
+                        msg += f"{item.get('id')}. {item.get('name')} — {item.get('points_required')} points\n"
+                    msg += "\nUse `!redeem <id>` to redeem an incentive."
+                    await ctx.send(msg)
+        except Exception:
+            await ctx.send("❌ Error fetching shop items.")
 
     @commands.command()
     async def redeem(self, ctx, reward_id: int):
-        user_id = str(ctx.author.id)
-        conn = db.connect()
-        c = conn.cursor()
-
-        # Check reward existence
-        c.execute('SELECT name, cost FROM rewards WHERE id = ?', (reward_id,))
-        reward = c.fetchone()
-        if not reward:
-            await ctx.send(f"Reward ID `{reward_id}` does not exist.")
-            return
-        reward_name, cost = reward
-
-        # Check user points
-        c.execute('SELECT points FROM users WHERE user_id = ?', (user_id,))
-        data = c.fetchone()
-        points = data[0] if data else 0
-
-        if points < cost:
-            await ctx.send(f"Sorry {ctx.author.mention}, you don't have enough points to redeem **{reward_name}**. You have {points} points.")
-            return
-
-        # Deduct points and log redemption
-        c.execute('UPDATE users SET points = points - ? WHERE user_id = ?', (cost, user_id))
-        c.execute('INSERT INTO redemptions(user_id, reward_id) VALUES (?, ?)', (user_id, reward_id))
-        conn.commit()
-        conn.close()
-
-        await ctx.send(f"{ctx.author.mention}, you have successfully redeemed **{reward_name}**! Our team will contact you shortly.")
+        try:
+            from bot import BACKEND_API_URL, BOT_SHARED_SECRET
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{BACKEND_API_URL}/api/bot/",
+                    json={"action": "redeem", "discord_id": str(ctx.author.id), "incentive_id": reward_id},
+                    headers={"Content-Type": "application/json", "X-Bot-Secret": BOT_SHARED_SECRET},
+                ) as resp:
+                    if resp.status != 200:
+                        text = await resp.text()
+                        await ctx.send(f"❌ Failed to redeem: {text[:200]}")
+                        return
+                    data = await resp.json()
+                    await ctx.send(f"{ctx.author.mention}, you have successfully redeemed **{data.get('message','item')}**! Our team will contact you shortly.")
+        except Exception:
+            await ctx.send("❌ Error redeeming incentive.")
 
 async def setup(bot):
     await bot.add_cog(Shop(bot))

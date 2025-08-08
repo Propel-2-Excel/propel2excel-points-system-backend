@@ -2,7 +2,6 @@ import os
 import discord
 from discord.ext import commands
 from dotenv import load_dotenv
-import db
 import asyncio
 import logging
 import sys
@@ -10,6 +9,7 @@ from datetime import datetime
 import math
 import aiohttp
 import json
+
 # Set up logging
 logging.basicConfig(
     level=logging.INFO,
@@ -25,10 +25,7 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
 BACKEND_API_URL = os.getenv('BACKEND_API_URL', 'http://localhost:8000')  # Default backend URL
-
-if not TOKEN:
-    logger.error("❌ DISCORD_TOKEN not found in .env file!")
-    sys.exit(1)
+BOT_SHARED_SECRET = os.getenv('BOT_SHARED_SECRET', '')
 
 # Bot setup
 intents = discord.Intents.default()
@@ -37,6 +34,7 @@ intents.reactions = True
 intents.members = True
 
 bot = commands.Bot(command_prefix='!', intents=intents, help_command=None)
+bot.start_time = datetime.utcnow()
 
 # Global variables
 cogs_loaded = False
@@ -48,18 +46,21 @@ async def register_user_with_backend(discord_id: str, display_name: str, usernam
     try:
         async with aiohttp.ClientSession() as session:
             payload = {
+                "action": "upsert-user",
                 "discord_id": discord_id,
                 "display_name": display_name,
                 "username": username,
-                "joined_at": datetime.utcnow().isoformat()
             }
             
             async with session.post(
-                f"{BACKEND_API_URL}/api/users/register/",
+                f"{BACKEND_API_URL}/api/bot/",
                 json=payload,
-                headers={"Content-Type": "application/json"}
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Bot-Secret": BOT_SHARED_SECRET,
+                }
             ) as response:
-                if response.status == 201:
+                if response.status in (200, 201):
                     logger.info(f"✅ Successfully registered user {display_name} ({discord_id}) with backend")
                     return True
                 elif response.status == 409:
@@ -78,16 +79,32 @@ async def update_user_points_in_backend(discord_id: str, points: int, action: st
     """Update user points in the backend API"""
     try:
         async with aiohttp.ClientSession() as session:
+            # Map free-form actions to Activity.activity_type values
+            action_map = {
+                "Message sent": "discord_activity",
+                "Liking/interacting": "like_interaction",
+                "Resume upload": "resume_upload",
+                "Event attendance": "event_attendance",
+                "LinkedIn update": "linkedin_post",
+            }
+            activity_type = action_map.get(action)
+            if activity_type is None:
+                activity_type = "discord_activity"
+
             payload = {
-                "points": points,
-                "action": action,
-                "timestamp": datetime.utcnow().isoformat()
+                "action": "add-activity",
+                "discord_id": discord_id,
+                "activity_type": activity_type,
+                "details": action,
             }
             
             async with session.post(
-                f"{BACKEND_API_URL}/api/users/{discord_id}/add-points/",
+                f"{BACKEND_API_URL}/api/bot/",
                 json=payload,
-                headers={"Content-Type": "application/json"}
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Bot-Secret": BOT_SHARED_SECRET,
+                }
             ) as response:
                 if response.status == 200:
                     logger.info(f"✅ Successfully updated points for user {discord_id} in backend")
@@ -109,7 +126,8 @@ async def load_cogs():
         return []
     
     loaded_cogs = []
-    cog_files = [f for f in os.listdir('./cogs') if f.endswith('.py')]
+    os.makedirs('cogs', exist_ok=True)
+    cog_files = [f for f in os.listdir('./cogs') if f.endswith('.py') and f != '__init__.py']
     
     for filename in cog_files:
         cog_name = filename[:-3]
@@ -132,15 +150,9 @@ async def load_cogs():
     return loaded_cogs
 
 async def setup_database():
-    """Setup database with error handling"""
-    try:
-        db.setup()
-        db.initialize_rewards()
-        logger.info("✅ Database setup completed successfully")
-        return True
-    except Exception as e:
-        logger.error(f"❌ Database setup failed: {e}")
-        return False
+    """No local DB initialization necessary; backend is source of truth."""
+    logger.info("ℹ️ Backend is source of truth (Supabase); no local DB setup")
+    return True
 
 @bot.event
 async def on_ready():
@@ -308,29 +320,19 @@ async def ping(ctx):
 
 @bot.command()
 async def test(ctx):
-    """Test command to verify points system"""
+    """Test command to verify points system (backend only)."""
     try:
         user_id = str(ctx.author.id)
-        conn = db.connect()
-        c = conn.cursor()
-        c.execute('SELECT points FROM users WHERE user_id = ?', (user_id,))
-        data = c.fetchone()
-        pts = data[0] if data else 0
-        conn.close()
-        
         embed = discord.Embed(
             title="🧪 Test Results",
             description="Testing bot functionality",
             color=0x00ff00
         )
         embed.add_field(name="User ID", value=user_id, inline=True)
-        embed.add_field(name="Current Points", value=f"{pts} points", inline=True)
         embed.add_field(name="Bot Status", value="✅ Working", inline=True)
-        embed.add_field(name="Database", value="✅ Connected", inline=True)
-        
+        embed.add_field(name="Backend", value="✅ Connected", inline=True)
         await ctx.send(embed=embed)
         logger.info(f"Test command used by {ctx.author} in {ctx.guild.name}")
-        
     except Exception as e:
         logger.error(f"Error in test command: {e}")
         await ctx.send("❌ An error occurred while processing the test command.")
@@ -545,57 +547,110 @@ async def help(ctx):
 
 
 @bot.command()
-async def leaderboard(ctx, page: int = 1):
-    """Show top users by points, paginated."""
-    PAGE_SIZE = 10 # Number of users per page
-    conn = db.connect()
-    c = conn.cursor()
-    c.execute("SELECT user_id, points FROM users ORDER BY points DESC")
-    rows = c.fetchall()
-    conn.close()
-    total_users = len(rows)
-    total_pages = max(1, math.ceil(total_users / PAGE_SIZE))
+async def link(ctx, code: str = None):
+    """Link your Discord account to your website account using a 6-digit code."""
+    if not code or len(code) != 6 or not code.isdigit():
+        await ctx.send("Usage: `!link <6-digit code>`\nGet your code from the website profile page.")
+        return
+    try:
+        async with aiohttp.ClientSession() as session:
+            payload = {
+                "action": "link",
+                "code": code,
+                "discord_id": str(ctx.author.id),
+            }
+            async with session.post(
+                f"{BACKEND_API_URL}/api/bot/",
+                json=payload,
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Bot-Secret": BOT_SHARED_SECRET,
+                }
+            ) as response:
+                if response.status == 200:
+                    await ctx.send("✅ Successfully linked your Discord to your website account.")
+                else:
+                    raw = await response.text()
+                    # Log full backend error for diagnostics
+                    logger.error(f"Link failed ({response.status}): {raw[:4000]}")
+                    # Try to show a concise message to user without exceeding Discord limits
+                    short_msg = None
+                    try:
+                        data = json.loads(raw)
+                        short_msg = data.get('error') or data
+                    except Exception:
+                        pass
+                    if not short_msg:
+                        short_msg = f"status {response.status}"
+                    # Ensure under 1800 chars to be safe
+                    short = str(short_msg)
+                    if len(short) > 1800:
+                        short = short[:1800] + "…"
+                    await ctx.send(f"❌ Linking failed: {short}")
+    except Exception as e:
+        await ctx.send(f"❌ Linking error: {e}")
 
-    page = max(1, min(page, total_pages))  # Clamp value
-    start = (page - 1) * PAGE_SIZE
-    end = start + PAGE_SIZE
-    msg = f"**🏆 Leaderboard (Page {page}/{total_pages})**\n"
-    for idx, (user_id, points) in enumerate(rows[start:end], start=start+1):
-        # Try to get Discord user for nice display name
-        member = ctx.guild.get_member(int(user_id)) if user_id.isdigit() else None
-        name = member.display_name if member else f"User {user_id}"
-        msg += f"{idx}. {name}: {points} points\n"
-    if total_pages > 1:
-        msg += f"\nType `!leaderboard <page>` to view other pages."
-    await ctx.send(msg)
+
+@bot.command()
+async def leaderboard(ctx, page: int = 1):
+    """Show top users by points from backend, paginated."""
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{BACKEND_API_URL}/api/bot/",
+                json={"action": "leaderboard", "page": page, "page_size": 10},
+                headers={"Content-Type": "application/json", "X-Bot-Secret": BOT_SHARED_SECRET},
+            ) as resp:
+                if resp.status != 200:
+                    await ctx.send("❌ Failed to fetch leaderboard.")
+                    return
+                data = await resp.json()
+                total_pages = data.get("total_pages", 1)
+                items = data.get("results", [])
+                msg = f"**🏆 Leaderboard (Page {data.get('page', 1)}/{total_pages})**\n"
+                for item in items:
+                    user_id = item.get("discord_id")
+                    points = item.get("total_points", 0)
+                    member = ctx.guild.get_member(int(user_id)) if user_id and user_id.isdigit() else None
+                    name = member.display_name if member else (item.get("username") or f"User {user_id}")
+                    msg += f"{item.get('position')}. {name}: {points} points\n"
+                if total_pages > 1:
+                    msg += "\nType `!leaderboard <page>` to view other pages."
+                await ctx.send(msg)
+    except Exception as e:
+        logger.error(f"Leaderboard error: {e}")
+        await ctx.send("❌ Error fetching leaderboard.")
 
 
 @bot.command()
 async def rank(ctx, member: discord.Member = None):
-    """Show user's rank and points on the leaderboard. Defaults to command caller."""
-    if member is None:
-        member = ctx.author
-
-    user_id = str(member.id)
-
-    conn = db.connect()
-    c = conn.cursor()
-    c.execute("SELECT user_id, points FROM users ORDER BY points DESC")
-    rows = c.fetchall()
-    conn.close()
-
-    position = None
-    points = 0
-    for idx, (uid, pts) in enumerate(rows, start=1):
-        if uid == user_id:
-            position = idx
-            points = pts
-            break
-
-    if position is None:
+    """Show user's rank and points (backend). Defaults to caller."""
+    try:
+        if member is None:
+            member = ctx.author
+        page = 1
+        while True:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{BACKEND_API_URL}/api/bot/",
+                    json={"action": "leaderboard", "page": page, "page_size": 50},
+                    headers={"Content-Type": "application/json", "X-Bot-Secret": BOT_SHARED_SECRET},
+                ) as resp:
+                    if resp.status != 200:
+                        await ctx.send("❌ Failed to fetch rank.")
+                        return
+                    data = await resp.json()
+                    for item in data.get("results", []):
+                        if item.get("discord_id") == str(member.id):
+                            await ctx.send(f"🏅 {member.display_name} is ranked #{item.get('position')} with {item.get('total_points', 0)} points.")
+                            return
+                    if data.get("page") >= data.get("total_pages"):
+                        break
+                    page += 1
         await ctx.send(f"{member.display_name} has no points and is not on the leaderboard.")
-    else:
-        await ctx.send(f"🏅 {member.display_name} is ranked #{position} with {points} points.")
+    except Exception as e:
+        logger.error(f"Rank error: {e}")
+        await ctx.send("❌ Error fetching rank.")
 
 
 # Error handling
