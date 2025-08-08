@@ -34,15 +34,57 @@ class Points(commands.Cog):
             print(f"Error syncing points with backend: {e}")
     
     async def fetch_user_total_points(self, discord_id: str) -> int:
-        """Fetch user's total points from backend (placeholder: requires auth endpoint later)."""
+        """Fetch user's total points from backend via /api/bot summary."""
+        try:
+            from bot import BACKEND_API_URL, BOT_SHARED_SECRET
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{BACKEND_API_URL}/api/bot/",
+                    json={"action": "summary", "discord_id": discord_id, "limit": 1},
+                    headers={"Content-Type": "application/json", "X-Bot-Secret": BOT_SHARED_SECRET},
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        return int(data.get("total_points", 0))
+        except Exception:
+            pass
         return 0
 
     async def fetch_user_recent_logs(self, discord_id: str):
-        """Fetch recent logs from backend (placeholder)."""
+        try:
+            from bot import BACKEND_API_URL, BOT_SHARED_SECRET
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{BACKEND_API_URL}/api/bot/",
+                    json={"action": "summary", "discord_id": discord_id, "limit": 10},
+                    headers={"Content-Type": "application/json", "X-Bot-Secret": BOT_SHARED_SECRET},
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        logs = data.get("recent_logs", [])
+                        # Return tuples (action, pts, ts) to match embed usage
+                        return [(item.get("action"), item.get("points", 0), item.get("timestamp", "")) for item in logs]
+        except Exception:
+            pass
         return []
 
     async def fetch_user_milestones(self, discord_id: str):
-        """Return current_points and achieved milestone names (placeholder)."""
+        try:
+            from bot import BACKEND_API_URL, BOT_SHARED_SECRET
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{BACKEND_API_URL}/api/bot/",
+                    json={"action": "summary", "discord_id": discord_id, "limit": 1},
+                    headers={"Content-Type": "application/json", "X-Bot-Secret": BOT_SHARED_SECRET},
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        current_points = int(data.get("total_points", 0))
+                        unlocks = data.get("unlocks", [])
+                        achieved = [item.get("name") for item in unlocks]
+                        return current_points, achieved
+        except Exception:
+            pass
         return 0, []
 
     async def check_milestones(self, user_id, total_points):
@@ -218,15 +260,7 @@ class Points(commands.Cog):
                 await ctx.send("❌ Please provide a detailed description of your resource (at least 10 characters).\n\n**Usage:** `!resource <description of the resource you want to share>`")
                 return
             
-            # Store the resource submission in database
-            conn = db.connect()
-            c = conn.cursor()
-            c.execute('''
-                INSERT INTO resource_submissions (user_id, resource_description, status)
-                VALUES (?, ?, 'pending')
-            ''', (str(ctx.author.id), description.strip()))
-            conn.commit()
-            conn.close()
+            # For MVP, do not persist local resource submissions; just notify admins
             
             # Create submission confirmation embed
             embed = discord.Embed(

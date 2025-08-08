@@ -151,15 +151,9 @@ async def load_cogs():
     return loaded_cogs
 
 async def setup_database():
-    """Setup database with error handling"""
-    try:
-        db.setup()
-        db.initialize_rewards()
-        logger.info("✅ Database setup completed successfully")
-        return True
-    except Exception as e:
-        logger.error(f"❌ Database setup failed: {e}")
-        return False
+    """No-op for local SQLite; backend is source of truth."""
+    logger.info("ℹ️ Skipping local SQLite setup; using backend API/Supabase")
+    return True
 
 @bot.event
 async def on_ready():
@@ -327,29 +321,19 @@ async def ping(ctx):
 
 @bot.command()
 async def test(ctx):
-    """Test command to verify points system"""
+    """Test command to verify points system (backend only)."""
     try:
         user_id = str(ctx.author.id)
-        conn = db.connect()
-        c = conn.cursor()
-        c.execute('SELECT points FROM users WHERE user_id = ?', (user_id,))
-        data = c.fetchone()
-        pts = data[0] if data else 0
-        conn.close()
-        
         embed = discord.Embed(
             title="🧪 Test Results",
             description="Testing bot functionality",
             color=0x00ff00
         )
         embed.add_field(name="User ID", value=user_id, inline=True)
-        embed.add_field(name="Current Points", value=f"{pts} points", inline=True)
         embed.add_field(name="Bot Status", value="✅ Working", inline=True)
-        embed.add_field(name="Database", value="✅ Connected", inline=True)
-        
+        embed.add_field(name="Backend", value="✅ Connected", inline=True)
         await ctx.send(embed=embed)
         logger.info(f"Test command used by {ctx.author} in {ctx.guild.name}")
-        
     except Exception as e:
         logger.error(f"Error in test command: {e}")
         await ctx.send("❌ An error occurred while processing the test command.")
@@ -610,56 +594,64 @@ async def link(ctx, code: str = None):
 
 @bot.command()
 async def leaderboard(ctx, page: int = 1):
-    """Show top users by points, paginated."""
-    PAGE_SIZE = 10 # Number of users per page
-    conn = db.connect()
-    c = conn.cursor()
-    c.execute("SELECT user_id, points FROM users ORDER BY points DESC")
-    rows = c.fetchall()
-    conn.close()
-    total_users = len(rows)
-    total_pages = max(1, math.ceil(total_users / PAGE_SIZE))
-
-    page = max(1, min(page, total_pages))  # Clamp value
-    start = (page - 1) * PAGE_SIZE
-    end = start + PAGE_SIZE
-    msg = f"**🏆 Leaderboard (Page {page}/{total_pages})**\n"
-    for idx, (user_id, points) in enumerate(rows[start:end], start=start+1):
-        # Try to get Discord user for nice display name
-        member = ctx.guild.get_member(int(user_id)) if user_id.isdigit() else None
-        name = member.display_name if member else f"User {user_id}"
-        msg += f"{idx}. {name}: {points} points\n"
-    if total_pages > 1:
-        msg += f"\nType `!leaderboard <page>` to view other pages."
-    await ctx.send(msg)
+    """Show top users by points from backend, paginated."""
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{BACKEND_API_URL}/api/bot/",
+                json={"action": "leaderboard", "page": page, "page_size": 10},
+                headers={"Content-Type": "application/json", "X-Bot-Secret": BOT_SHARED_SECRET},
+            ) as resp:
+                if resp.status != 200:
+                    await ctx.send("❌ Failed to fetch leaderboard.")
+                    return
+                data = await resp.json()
+                total_pages = data.get("total_pages", 1)
+                items = data.get("results", [])
+                msg = f"**🏆 Leaderboard (Page {data.get('page', 1)}/{total_pages})**\n"
+                for item in items:
+                    user_id = item.get("discord_id")
+                    points = item.get("total_points", 0)
+                    member = ctx.guild.get_member(int(user_id)) if user_id and user_id.isdigit() else None
+                    name = member.display_name if member else (item.get("username") or f"User {user_id}")
+                    msg += f"{item.get('position')}. {name}: {points} points\n"
+                if total_pages > 1:
+                    msg += "\nType `!leaderboard <page>` to view other pages."
+                await ctx.send(msg)
+    except Exception as e:
+        logger.error(f"Leaderboard error: {e}")
+        await ctx.send("❌ Error fetching leaderboard.")
 
 
 @bot.command()
 async def rank(ctx, member: discord.Member = None):
-    """Show user's rank and points on the leaderboard. Defaults to command caller."""
-    if member is None:
-        member = ctx.author
-
-    user_id = str(member.id)
-
-    conn = db.connect()
-    c = conn.cursor()
-    c.execute("SELECT user_id, points FROM users ORDER BY points DESC")
-    rows = c.fetchall()
-    conn.close()
-
-    position = None
-    points = 0
-    for idx, (uid, pts) in enumerate(rows, start=1):
-        if uid == user_id:
-            position = idx
-            points = pts
-            break
-
-    if position is None:
+    """Show user's rank and points (backend). Defaults to caller."""
+    try:
+        if member is None:
+            member = ctx.author
+        page = 1
+        while True:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{BACKEND_API_URL}/api/bot/",
+                    json={"action": "leaderboard", "page": page, "page_size": 50},
+                    headers={"Content-Type": "application/json", "X-Bot-Secret": BOT_SHARED_SECRET},
+                ) as resp:
+                    if resp.status != 200:
+                        await ctx.send("❌ Failed to fetch rank.")
+                        return
+                    data = await resp.json()
+                    for item in data.get("results", []):
+                        if item.get("discord_id") == str(member.id):
+                            await ctx.send(f"🏅 {member.display_name} is ranked #{item.get('position')} with {item.get('total_points', 0)} points.")
+                            return
+                    if data.get("page") >= data.get("total_pages"):
+                        break
+                    page += 1
         await ctx.send(f"{member.display_name} has no points and is not on the leaderboard.")
-    else:
-        await ctx.send(f"🏅 {member.display_name} is ranked #{position} with {points} points.")
+    except Exception as e:
+        logger.error(f"Rank error: {e}")
+        await ctx.send("❌ Error fetching rank.")
 
 
 # Error handling
