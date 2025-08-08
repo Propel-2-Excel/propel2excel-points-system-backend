@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import User, Activity, PointsLog, Incentive, Redemption, UserStatus
+from .models import User, Activity, PointsLog, Incentive, Redemption, UserStatus, UserIncentiveUnlock, DiscordLinkCode
 
 class UserSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, required=False)
@@ -39,9 +39,29 @@ class PointsLogSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'timestamp']
 
 class IncentiveSerializer(serializers.ModelSerializer):
+    is_unlocked = serializers.SerializerMethodField()
+    unlocked_at = serializers.SerializerMethodField()
     class Meta:
         model = Incentive
         fields = '__all__'
+        read_only_fields = ['is_unlocked', 'unlocked_at']
+
+    def get_is_unlocked(self, obj):
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return False
+        # Fallback to current total points to ensure UI reflects reality even if
+        # an unlock row hasn't been created yet.
+        if getattr(request.user, 'total_points', 0) >= obj.points_required:
+            return True
+        return UserIncentiveUnlock.objects.filter(user=request.user, incentive=obj).exists()
+
+    def get_unlocked_at(self, obj):
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return None
+        uiu = UserIncentiveUnlock.objects.filter(user=request.user, incentive=obj).first()
+        return uiu.unlocked_at if uiu else None
 
 class RedemptionSerializer(serializers.ModelSerializer):
     incentive_name = serializers.CharField(source='incentive.name', read_only=True)
@@ -65,3 +85,10 @@ class UserStatusSerializer(serializers.ModelSerializer):
             'points_suspended', 'suspension_end', 'last_activity'
         ]
         read_only_fields = ['id', 'last_activity'] 
+
+
+class DiscordLinkCodeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DiscordLinkCode
+        fields = ['code', 'expires_at', 'used_at']
+        read_only_fields = fields
