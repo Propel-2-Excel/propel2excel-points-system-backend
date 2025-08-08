@@ -122,3 +122,39 @@ class UserStatus(models.Model):
     
     def __str__(self):
         return f"{self.user.username} - {self.warnings} warnings"
+
+class UserIncentiveUnlock(models.Model):
+    """Tracks when a user unlocks a given incentive threshold.
+
+    This enables per-user unlock status on the website and allows
+    notification deduplication if needed.
+    """
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='unlocked_incentives')
+    incentive = models.ForeignKey(Incentive, on_delete=models.CASCADE, related_name='user_unlocks')
+    unlocked_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'user_incentive_unlocks'
+        unique_together = ('user', 'incentive')
+        ordering = ['-unlocked_at']
+
+    def __str__(self):
+        return f"{self.user.username} unlocked {self.incentive.name}"
+
+class DiscordLinkCode(models.Model):
+    """One-time code to link a logged-in website user with a Discord account."""
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='discord_link_codes')
+    code = models.CharField(max_length=6, unique=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField()
+    used_at = models.DateTimeField(blank=True, null=True)
+
+    class Meta:
+        db_table = 'discord_link_codes'
+        indexes = [
+            models.Index(fields=['code']),
+        ]
+
+    def __str__(self):
+        status = 'used' if self.used_at else 'active'
+        return f"LinkCode({self.code}) for {self.user.username} [{status}]"
