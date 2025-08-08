@@ -2,7 +2,6 @@ import os
 import discord
 from discord.ext import commands
 from dotenv import load_dotenv
-import db
 import asyncio
 import logging
 import sys
@@ -151,8 +150,8 @@ async def load_cogs():
     return loaded_cogs
 
 async def setup_database():
-    """No-op for local SQLite; backend is source of truth."""
-    logger.info("ℹ️ Skipping local SQLite setup; using backend API/Supabase")
+    """No local DB initialization necessary; backend is source of truth."""
+    logger.info("ℹ️ Backend is source of truth (Supabase); no local DB setup")
     return True
 
 @bot.event
