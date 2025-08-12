@@ -241,7 +241,7 @@ async def on_member_join(member):
         
         embed.add_field(
             name="💰 Points System",
-            value="Earn points for activities like:\n• Sending messages (+1 pt)\n• Reacting to posts (+2 pts)\n• Uploading resume (+20 pts)\n• Attending events (+15 pts)\n• Sharing resources (+10 pts)\n• LinkedIn updates (+5 pts)",
+            value="Earn points for activities like:\n• Sending messages (+1 pt daily)\n• Reacting to posts (+2 pts)\n• Uploading resume (+20 pts)\n• Attending events (+15 pts)\n• Sharing resources (+10 pts)\n• LinkedIn updates (+5 pts)",
             inline=False
         )
         
@@ -275,7 +275,7 @@ async def on_member_join(member):
             "Welcome to the Propel2Excel Discord community!\n\n"
             "**You've just joined a community where every interaction helps you grow!**\n\n"
             "Start earning points right away by:\n"
-            "• Sending messages (+1 point each)\n"
+            "• Sending messages (+1 point daily)\n"
             "• Reacting to posts (+2 points each)\n"
             "• Using commands like `!resume`, `!event`, `!resource`, `!linkedin`\n\n"
             "**Unlock real incentives:**\n"
@@ -378,7 +378,7 @@ async def welcome(ctx):
         
         embed.add_field(
             name="💰 Points System",
-            value="Earn points for activities like:\n• Sending messages (+1 pt)\n• Reacting to posts (+2 pts)\n• Uploading resume (+20 pts)\n• Attending events (+15 pts)\n• Sharing resources (+10 pts)\n• LinkedIn updates (+5 pts)",
+            value="Earn points for activities like:\n• Sending messages (+1 pt daily)\n• Reacting to posts (+2 pts)\n• Uploading resume (+20 pts)\n• Attending events (+15 pts)\n• Sharing resources (+10 pts)\n• LinkedIn updates (+5 pts)",
             inline=False
         )
         
@@ -424,7 +424,7 @@ async def sendwelcome(ctx, member: discord.Member):
         
         embed.add_field(
             name="💰 Points System",
-            value="Earn points for activities like:\n• Sending messages (+1 pt)\n• Reacting to posts (+2 pts)\n• Uploading resume (+20 pts)\n• Attending events (+15 pts)\n• Sharing resources (+10 pts)\n• LinkedIn updates (+5 pts)",
+            value="Earn points for activities like:\n• Sending messages (+1 pt daily)\n• Reacting to posts (+2 pts)\n• Uploading resume (+20 pts)\n• Attending events (+15 pts)\n• Sharing resources (+10 pts)\n• LinkedIn updates (+5 pts)",
             inline=False
         )
         

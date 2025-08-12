@@ -29,9 +29,122 @@ class Points(commands.Cog):
         """Sync points with backend API"""
         try:
             from bot import update_user_points_in_backend
-            await update_user_points_in_backend(user_id, pts, action)
+            return await update_user_points_in_backend(user_id, pts, action)
         except Exception as e:
             print(f"Error syncing points with backend: {e}")
+            return False
+
+    async def award_daily_points(self, message):
+        """Award daily Discord points and send motivational message if points were actually awarded"""
+        user_id = str(message.author.id)
+        
+        try:
+            # Call backend API directly to check response
+            response_data = await self.call_backend_api(user_id, "Message sent")
+            
+            # Only show reward if points were actually awarded (not if daily limit hit)
+            if response_data and not response_data.get("already_earned_today", False):
+                # Get user's updated total points
+                total_points = response_data.get("total_points", 0)
+                
+                # Create motivational embed
+                embed = discord.Embed(
+                    title="🎉 Daily Reward Earned!",
+                    description=f"Great to see you here, {message.author.display_name}!",
+                    color=0x00ff00
+                )
+                
+                embed.add_field(
+                    name="💰 Today's Reward",
+                    value="**+1 point** for staying active in our community!",
+                    inline=False
+                )
+                
+                embed.add_field(
+                    name="🏆 Your Total",
+                    value=f"**{total_points} points**",
+                    inline=True
+                )
+                
+                # Add milestone progress
+                next_milestone = self.get_next_milestone(total_points)
+                if next_milestone:
+                    points_needed = next_milestone['points'] - total_points
+                    embed.add_field(
+                        name="🎯 Next Goal",
+                        value=f"**{points_needed} more** for {next_milestone['name']}",
+                        inline=True
+                    )
+                
+                # Add motivational footer
+                motivational_messages = [
+                    "Every message counts towards your goals! 🚀",
+                    "You're building great habits! Keep it up! 💪",
+                    "Consistency is key to success! 🌟",
+                    "Your engagement helps the whole community grow! 🌱",
+                    "Small steps lead to big achievements! ⭐"
+                ]
+                import random
+                embed.set_footer(text=random.choice(motivational_messages))
+                
+                # Send the reward message
+                await message.channel.send(embed=embed)
+                
+        except Exception as e:
+            print(f"Error in award_daily_points: {e}")
+
+    async def call_backend_api(self, user_id, action):
+        """Call backend API and return response data"""
+        try:
+            from bot import BACKEND_API_URL, BOT_SHARED_SECRET
+            import aiohttp
+            
+            # Map free-form actions to Activity.activity_type values
+            action_map = {
+                "Message sent": "discord_activity",
+                "Liking/interacting": "like_interaction",
+            }
+            activity_type = action_map.get(action, "discord_activity")
+
+            payload = {
+                "action": "add-activity",
+                "discord_id": user_id,
+                "activity_type": activity_type,
+                "details": action,
+            }
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{BACKEND_API_URL}/api/bot/",
+                    json=payload,
+                    headers={
+                        "Content-Type": "application/json",
+                        "X-Bot-Secret": BOT_SHARED_SECRET,
+                    }
+                ) as response:
+                    if response.status == 200:
+                        return await response.json()
+                    else:
+                        error_text = await response.text()
+                        print(f"Backend API error: {response.status} - {error_text}")
+                        return None
+                    
+        except Exception as e:
+            print(f"Error calling backend API: {e}")
+            return None
+
+    def get_next_milestone(self, current_points):
+        """Get the next milestone the user can work towards"""
+        milestones = [
+            {"points": 50, "name": "Azure Certification"},
+            {"points": 75, "name": "Resume Review"},
+            {"points": 100, "name": "Hackathon Entry"}
+        ]
+        
+        for milestone in milestones:
+            if current_points < milestone["points"]:
+                return milestone
+        return None  # User has reached all milestones
     
     async def fetch_user_total_points(self, discord_id: str) -> int:
         """Fetch user's total points from backend via /api/bot summary."""
@@ -159,8 +272,8 @@ class Points(commands.Cog):
         
         user_id = str(message.author.id)
         
-        # Award points for normal activity (only for non-command messages)
-        self.add_points(user_id, 1, "Message sent")
+        # Award points for normal activity and send motivational message
+        await self.award_daily_points(message)
 
     @commands.Cog.listener()
     async def on_reaction_add(self, reaction, user):

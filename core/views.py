@@ -327,6 +327,23 @@ class BotIntegrationView(APIView):
                 user_status.points_suspended = False
                 user_status.save(update_fields=["points_suspended"])
 
+            # Daily limit check for discord_activity only
+            if activity_type == "discord_activity":
+                today = now.date()
+                # Check if user already earned discord_activity points today
+                existing_log = PointsLog.objects.filter(
+                    user=user,
+                    activity=activity,
+                    timestamp__date=today
+                ).first()
+                
+                if existing_log:
+                    return Response({
+                        "message": "Daily Discord activity points already earned today",
+                        "total_points": user.total_points,
+                        "already_earned_today": True,
+                    })
+
             points_log = PointsLog.objects.create(
                 user=user,
                 activity=activity,
