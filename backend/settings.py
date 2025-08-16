@@ -47,6 +47,7 @@ INSTALLED_APPS = [
 INSTALLED_APPS += [
     "rest_framework",
     "drf_spectacular",
+    "corsheaders",
     "core",
 ]
 
@@ -64,6 +65,7 @@ SPECTACULAR_SETTINGS = {
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "corsheaders.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -147,6 +149,27 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # Custom user model
 AUTH_USER_MODEL = 'core.User'
+
+# CORS settings for frontend integration
+# Read from environment variable for flexible deployment
+CORS_ALLOWED_ORIGINS = env.list("CORS_ALLOWED_ORIGINS", default=[
+    "http://localhost:3000",  # Local development
+    "http://127.0.0.1:3000",
+])
+
+# Allow credentials for JWT authentication
+CORS_ALLOW_CREDENTIALS = True
+
+# Allow all headers for development (restrict in production)
+CORS_ALLOW_ALL_HEADERS = True
+
+# JWT Settings
+from datetime import timedelta
+SIMPLE_JWT = {
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=60),
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
+    'ROTATE_REFRESH_TOKENS': True,
+}
 
 # Shared secret for Discord bot → backend integration
 BOT_SHARED_SECRET = env("BOT_SHARED_SECRET", default="")

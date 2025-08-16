@@ -1,0 +1,14 @@
+# Frontend Environment Configuration
+# Place this content in your Next.js project's .env.local file
+
+# Local Development (Backend running locally)
+NEXT_PUBLIC_API_URL=http://localhost:8000
+NEXT_PUBLIC_API_BASE_URL=http://localhost:8000/api
+
+# Production with Render Backend (update with your actual Render URL)
+# NEXT_PUBLIC_API_URL=https://your-backend.onrender.com
+# NEXT_PUBLIC_API_BASE_URL=https://your-backend.onrender.com/api
+
+# Testing with Render Backend Locally
+# NEXT_PUBLIC_API_URL=https://your-backend.onrender.com
+# NEXT_PUBLIC_API_BASE_URL=https://your-backend.onrender.com/api
