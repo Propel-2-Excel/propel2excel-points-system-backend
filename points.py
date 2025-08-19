@@ -103,6 +103,7 @@ class Points(commands.Cog):
             action_map = {
                 "Message sent": "discord_activity",
                 "Liking/interacting": "like_interaction",
+                "Resume review request": "resume_review_request",
             }
             activity_type = action_map.get(action, "discord_activity")
 
@@ -332,19 +333,53 @@ class Points(commands.Cog):
             print(f"Error in pointshistory command: {e}")
 
     @commands.command()
-    @commands.cooldown(1, 10, commands.BucketType.user)  # 1 use per 10 seconds per user
+    @commands.cooldown(1, 30, commands.BucketType.user)
     async def resume(self, ctx):
-        """Upload resume for +20 points"""
+        """Start resume review process - sends DM with form link and instructions"""
         try:
-            self.add_points(str(ctx.author.id), 20, "Resume upload")
+            form_url = "https://forms.gle/EKHLrqhHwt1bGQjd6"
+            
             embed = discord.Embed(
-                title="📄 Resume Upload",
-                description=f"{ctx.author.mention}, you've earned **20 points** for uploading your resume!",
-                color=0x00ff00
+                title="📋 Resume Review Request",
+                description="I'll help you get a professional resume review!",
+                color=0x0099ff
             )
-            await ctx.send(embed=embed)
+            embed.add_field(
+                name="📝 Next Steps", 
+                value="1. Click the form link below\n2. Fill out your details\n3. Upload your resume\n4. Select your target industry\n5. Choose your availability",
+                inline=False
+            )
+            embed.add_field(
+                name="🔗 Form Link",
+                value=f"[Resume Review Form]({form_url})",
+                inline=False
+            )
+            embed.add_field(
+                name="⏰ Sessions",
+                value="30-minute slots between 9 AM - 5 PM",
+                inline=True
+            )
+            embed.add_field(
+                name="📧 Contact",
+                value="Email: propel@propel2excel.com",
+                inline=True
+            )
+            embed.add_field(
+                name="💡 Tips",
+                value="• Have your resume ready as PDF\n• Be specific about your target role\n• Choose multiple time slots for better matching",
+                inline=False
+            )
+            
+            await ctx.author.send(embed=embed)
+            await ctx.send(f"✅ {ctx.author.mention} Check your DMs for the resume review form!")
+            
+            # Record the activity using current backend pattern
+            await self.call_backend_api(str(ctx.author.id), "Resume review request")
+            
+        except discord.Forbidden:
+            await ctx.send("❌ I can't send you a DM. Please enable DMs from server members and try again.")
         except Exception as e:
-            await ctx.send("❌ An error occurred while processing your resume upload.")
+            await ctx.send(f"❌ Error: {e}")
             print(f"Error in resume command: {e}")
 
     @commands.command()

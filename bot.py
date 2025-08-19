@@ -84,6 +84,7 @@ async def update_user_points_in_backend(discord_id: str, points: int, action: st
                 "Message sent": "discord_activity",
                 "Liking/interacting": "like_interaction",
                 "Resume upload": "resume_upload",
+                "Resume review request": "resume_review_request",
                 "Event attendance": "event_attendance",
                 "LinkedIn update": "linkedin_post",
             }
@@ -241,7 +242,7 @@ async def on_member_join(member):
         
         embed.add_field(
             name="💰 Points System",
-            value="Earn points for activities like:\n• Sending messages (+1 pt daily)\n• Reacting to posts (+2 pts)\n• Uploading resume (+20 pts)\n• Attending events (+15 pts)\n• Sharing resources (+10 pts)\n• LinkedIn updates (+5 pts)",
+            value="Earn points for activities like:\n• Sending messages (+1 pt daily)\n• Reacting to posts (+2 pts)\n• Professional resume review (process)\n• Attending events (+15 pts)\n• Sharing resources (+10 pts)\n• LinkedIn updates (+5 pts)",
             inline=False
         )
         
@@ -277,7 +278,7 @@ async def on_member_join(member):
             "Start earning points right away by:\n"
             "• Sending messages (+1 point daily)\n"
             "• Reacting to posts (+2 points each)\n"
-            "• Using commands like `!resume`, `!event`, `!resource`, `!linkedin`\n\n"
+            "• Using commands like `!resume` (professional review), `!event`, `!resource`, `!linkedin`\n\n"
             "**Unlock real incentives:**\n"
             "• 50 points = Azure Certification\n"
             "• 75 points = Resume Review\n"
@@ -378,7 +379,7 @@ async def welcome(ctx):
         
         embed.add_field(
             name="💰 Points System",
-            value="Earn points for activities like:\n• Sending messages (+1 pt daily)\n• Reacting to posts (+2 pts)\n• Uploading resume (+20 pts)\n• Attending events (+15 pts)\n• Sharing resources (+10 pts)\n• LinkedIn updates (+5 pts)",
+            value="Earn points for activities like:\n• Sending messages (+1 pt daily)\n• Reacting to posts (+2 pts)\n• Professional resume review (process)\n• Attending events (+15 pts)\n• Sharing resources (+10 pts)\n• LinkedIn updates (+5 pts)",
             inline=False
         )
         
@@ -424,7 +425,7 @@ async def sendwelcome(ctx, member: discord.Member):
         
         embed.add_field(
             name="💰 Points System",
-            value="Earn points for activities like:\n• Sending messages (+1 pt daily)\n• Reacting to posts (+2 pts)\n• Uploading resume (+20 pts)\n• Attending events (+15 pts)\n• Sharing resources (+10 pts)\n• LinkedIn updates (+5 pts)",
+            value="Earn points for activities like:\n• Sending messages (+1 pt daily)\n• Reacting to posts (+2 pts)\n• Professional resume review (process)\n• Attending events (+15 pts)\n• Sharing resources (+10 pts)\n• LinkedIn updates (+5 pts)",
             inline=False
         )
         
@@ -501,7 +502,7 @@ async def help(ctx):
             value="`!points` - Check your points\n"
                   "`!pointshistory` - View your point history\n"
                   "`!pointvalues` - Show all ways to earn points\n"
-                  "`!resume` - Claim points for resume upload\n"
+                  "`!resume` - Start professional resume review process\n"
                   "`!event` - Claim points for event attendance\n"
                   "`!resource` - Claim points for sharing resources\n"
                   "`!linkedin` - Claim points for LinkedIn updates",
@@ -513,6 +514,16 @@ async def help(ctx):
             name="🛍️ Shop Commands",
             value="`!shop` - View available rewards\n"
                   "`!redeem <id>` - Redeem a reward",
+            inline=False
+        )
+        
+        # Resume Review commands
+        embed.add_field(
+            name="📋 Resume Review Commands",
+            value="`!resume_review` - Alternative resume review command\n"
+                  "`!review_status` - Check your review status\n"
+                  "`!add_professional` - [Admin] Add professional reviewer\n"
+                  "`!match_review` - [Admin] Match student with professional",
             inline=False
         )
         

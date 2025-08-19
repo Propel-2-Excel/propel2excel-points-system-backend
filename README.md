@@ -11,12 +11,19 @@ A career-focused Discord bot that motivates and rewards student achievement thro
 - **University**: Limited access to student analytics
 
 ### Points System
-- Resume upload: +20 pts
+- Professional resume review: Professional review process
 - Event attendance: +15 pts
 - Resource share: +10 pts
 - Like/interaction: +2 pts
 - LinkedIn post: +5 pts
 - Discord activity: +5 pts
+
+### Resume Review System
+- **Enhanced Process**: Professional review workflow with form submission
+- **Google Forms Integration**: Structured data collection for better matching
+- **Professional Network**: Curated reviewers across multiple industries
+- **Admin Tools**: Complete management system for review coordination
+- **Email Integration**: Professional communication via propel@propel2excel.com
 
 ### Incentives
 - Azure Certification (50 pts)
