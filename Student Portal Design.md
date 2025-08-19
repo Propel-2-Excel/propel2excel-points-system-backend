@@ -5,9 +5,9 @@
 When a user clicks on the Propel to Excel website login page, they will see a page with two primary options: **Login** and **Sign Up**.
 
 * **Login:** This is for existing users. They will enter their email and password to access their specific portal (student, company, etc.).  
-* **Sign Up:** This is for new users. Clicking this button initiates the dynamic signup flow 
+* **Register:** This is for new users. Clicking this button initiates the dynamic registration flow 
 
-**The Sign Up Flow**
+**The Registration Flow**
 
 1. **Role Selection:** A new user clicks "Sign Up" and is immediately presented with a clear choice of roles: **Student, Company, Non-Profit Organization, University**. Since this is the student portal, the user will select **"Student." NOTE: Admin will not be an option and this role will be created internally.**   
 2. **Discord Name Validation**   
