@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import User, Activity, PointsLog, Incentive, Redemption, UserStatus, UserIncentiveUnlock, DiscordLinkCode
+from .models import User, Activity, PointsLog, Incentive, Redemption, UserStatus, UserIncentiveUnlock, DiscordLinkCode, Professional, ReviewRequest
 
 class UserSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, required=False)
@@ -92,3 +92,57 @@ class DiscordLinkCodeSerializer(serializers.ModelSerializer):
         model = DiscordLinkCode
         fields = ['code', 'expires_at', 'used_at']
         read_only_fields = fields
+
+class ProfessionalSerializer(serializers.ModelSerializer):
+    review_count = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Professional
+        fields = [
+            'id', 'name', 'email', 'specialties', 'bio', 'availability',
+            'is_active', 'total_reviews', 'rating', 'review_count',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'total_reviews', 'rating', 'created_at', 'updated_at']
+    
+    def get_review_count(self, obj):
+        return obj.assigned_reviews.filter(status='completed').count()
+
+class ReviewRequestSerializer(serializers.ModelSerializer):
+    student_username = serializers.CharField(source='student.username', read_only=True)
+    professional_name = serializers.CharField(source='professional.name', read_only=True)
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    priority_display = serializers.CharField(source='get_priority_display', read_only=True)
+    days_since_submission = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = ReviewRequest
+        fields = [
+            'id', 'student', 'student_username', 'professional', 'professional_name',
+            'status', 'status_display', 'priority', 'priority_display',
+            'form_data', 'target_industry', 'target_role', 'experience_level',
+            'preferred_times', 'scheduled_time', 'session_duration',
+            'review_notes', 'student_feedback', 'rating',
+            'submission_date', 'matched_date', 'completed_date',
+            'admin_notes', 'days_since_submission'
+        ]
+        read_only_fields = [
+            'id', 'submission_date', 'matched_date', 'completed_date',
+            'student_username', 'professional_name', 'status_display', 
+            'priority_display', 'days_since_submission'
+        ]
+    
+    def get_days_since_submission(self, obj):
+        from django.utils import timezone
+        delta = timezone.now() - obj.submission_date
+        return delta.days
+
+class ReviewRequestCreateSerializer(serializers.ModelSerializer):
+    """Simplified serializer for creating review requests via Discord bot"""
+    
+    class Meta:
+        model = ReviewRequest
+        fields = [
+            'student', 'target_industry', 'target_role', 'experience_level',
+            'preferred_times', 'priority', 'form_data', 'admin_notes'
+        ]

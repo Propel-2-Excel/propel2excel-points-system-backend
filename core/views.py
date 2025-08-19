@@ -6,10 +6,11 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import authenticate
 from django.db import transaction
 from django.utils import timezone
-from .models import User, Activity, PointsLog, Incentive, Redemption, UserStatus, UserIncentiveUnlock, DiscordLinkCode
+from .models import User, Activity, PointsLog, Incentive, Redemption, UserStatus, UserIncentiveUnlock, DiscordLinkCode, Professional, ReviewRequest
 from .serializers import (
     UserSerializer, ActivitySerializer, PointsLogSerializer,
-    IncentiveSerializer, RedemptionSerializer, UserStatusSerializer, DiscordLinkCodeSerializer
+    IncentiveSerializer, RedemptionSerializer, UserStatusSerializer, DiscordLinkCodeSerializer,
+    ProfessionalSerializer, ReviewRequestSerializer, ReviewRequestCreateSerializer
 )
 
 class UserViewSet(viewsets.ModelViewSet):
@@ -219,6 +220,126 @@ class UserStatusViewSet(viewsets.ReadOnlyModelViewSet):
             return UserStatus.objects.all()
         return UserStatus.objects.filter(user=self.request.user)
 
+class ProfessionalViewSet(viewsets.ModelViewSet):
+    queryset = Professional.objects.all()
+    serializer_class = ProfessionalSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_queryset(self):
+        """Filter based on user role"""
+        if self.request.user.role == 'admin':
+            return Professional.objects.all()
+        # Non-admin users can only view active professionals
+        return Professional.objects.filter(is_active=True)
+    
+    def perform_create(self, serializer):
+        """Only admins can create professionals"""
+        if self.request.user.role != 'admin':
+            raise permissions.PermissionDenied("Only admins can create professionals")
+        serializer.save()
+    
+    def perform_update(self, serializer):
+        """Only admins can update professionals"""
+        if self.request.user.role != 'admin':
+            raise permissions.PermissionDenied("Only admins can update professionals")
+        serializer.save()
+    
+    def perform_destroy(self, instance):
+        """Only admins can delete professionals"""
+        if self.request.user.role != 'admin':
+            raise permissions.PermissionDenied("Only admins can delete professionals")
+        instance.delete()
+
+class ReviewRequestViewSet(viewsets.ModelViewSet):
+    serializer_class = ReviewRequestSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_queryset(self):
+        """Users can only see their own requests, admins see all"""
+        if self.request.user.role == 'admin':
+            return ReviewRequest.objects.all()
+        return ReviewRequest.objects.filter(student=self.request.user)
+    
+    def perform_create(self, serializer):
+        """Set the student to current user"""
+        serializer.save(student=self.request.user)
+    
+    @action(detail=True, methods=['post'])
+    def assign_professional(self, request, pk=None):
+        """Assign a professional to a review request (admin only)"""
+        if request.user.role != 'admin':
+            return Response({'error': 'Admin access required'}, status=status.HTTP_403_FORBIDDEN)
+        
+        review_request = self.get_object()
+        professional_id = request.data.get('professional_id')
+        
+        try:
+            professional = Professional.objects.get(id=professional_id, is_active=True)
+            review_request.professional = professional
+            review_request.status = 'matched'
+            review_request.matched_date = timezone.now()
+            review_request.save()
+            
+            return Response({
+                'message': f'Assigned {professional.name} to review request',
+                'review_request': ReviewRequestSerializer(review_request).data
+            })
+        except Professional.DoesNotExist:
+            return Response({'error': 'Professional not found'}, status=status.HTTP_404_NOT_FOUND)
+    
+    @action(detail=True, methods=['post'])
+    def complete_review(self, request, pk=None):
+        """Mark review as completed and add notes"""
+        review_request = self.get_object()
+        
+        # Students can only complete their own reviews, professionals and admins can complete any
+        if (request.user.role not in ['admin'] and 
+            review_request.student != request.user and 
+            (not review_request.professional or review_request.professional.email != request.user.email)):
+            return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+        
+        review_request.status = 'completed'
+        review_request.completed_date = timezone.now()
+        review_request.review_notes = request.data.get('review_notes', review_request.review_notes)
+        review_request.student_feedback = request.data.get('student_feedback', review_request.student_feedback)
+        review_request.rating = request.data.get('rating', review_request.rating)
+        review_request.save()
+        
+        return Response({
+            'message': 'Review marked as completed',
+            'review_request': ReviewRequestSerializer(review_request).data
+        })
+    
+    @action(detail=False, methods=['get'])
+    def pending_requests(self, request):
+        """Get pending review requests (admin only)"""
+        if request.user.role != 'admin':
+            return Response({'error': 'Admin access required'}, status=status.HTTP_403_FORBIDDEN)
+        
+        pending_requests = ReviewRequest.objects.filter(status='pending').order_by('-submission_date')
+        serializer = ReviewRequestSerializer(pending_requests, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'])
+    def statistics(self, request):
+        """Get review request statistics (admin only)"""
+        if request.user.role != 'admin':
+            return Response({'error': 'Admin access required'}, status=status.HTTP_403_FORBIDDEN)
+        
+        from django.db.models import Count, Avg
+        
+        stats = {
+            'total_requests': ReviewRequest.objects.count(),
+            'pending_requests': ReviewRequest.objects.filter(status='pending').count(),
+            'matched_requests': ReviewRequest.objects.filter(status='matched').count(),
+            'completed_requests': ReviewRequest.objects.filter(status='completed').count(),
+            'cancelled_requests': ReviewRequest.objects.filter(status='cancelled').count(),
+            'average_rating': ReviewRequest.objects.filter(rating__isnull=False).aggregate(Avg('rating'))['rating__avg'] or 0,
+            'total_professionals': Professional.objects.filter(is_active=True).count(),
+        }
+        
+        return Response(stats)
+
 
 class BotIntegrationView(APIView):
     """Minimal secured endpoints for Discord bot integration.
@@ -269,6 +390,16 @@ class BotIntegrationView(APIView):
             return self._unsuspend_user(request)
         if action == "activitylog":
             return self._activitylog(request)
+        if action == "review-status":
+            return self._review_status(request)
+        if action == "add-professional":
+            return self._add_professional(request)
+        if action == "list-professionals":
+            return self._list_professionals(request)
+        if action == "match-review":
+            return self._match_review(request)
+        if action == "review-stats":
+            return self._review_stats(request)
 
         return Response({"error": "Unknown action"}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -581,6 +712,140 @@ class BotIntegrationView(APIView):
             for pl in logs
         ]
         return Response({"items": items})
+
+    def _review_status(self, request):
+        """Check review request status for a user"""
+        discord_id = request.data.get("discord_id")
+        if not discord_id:
+            return Response({"error": "discord_id is required"}, status=400)
+        
+        try:
+            user = User.objects.get(discord_id=str(discord_id))
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=404)
+        
+        # Get user's most recent review request
+        recent_request = ReviewRequest.objects.filter(student=user).order_by('-submission_date').first()
+        
+        if not recent_request:
+            return Response({
+                "has_request": False,
+                "message": "No review requests found"
+            })
+        
+        return Response({
+            "has_request": True,
+            "status": recent_request.status,
+            "submission_date": recent_request.submission_date.isoformat(),
+            "professional": recent_request.professional.name if recent_request.professional else None,
+            "scheduled_time": recent_request.scheduled_time.isoformat() if recent_request.scheduled_time else None,
+        })
+
+    def _add_professional(self, request):
+        """Add a professional to the review pool"""
+        name = request.data.get("name")
+        email = request.data.get("email")
+        specialties = request.data.get("specialties", "")
+        
+        if not name or not email:
+            return Response({"error": "name and email are required"}, status=400)
+        
+        professional = Professional.objects.create(
+            name=name,
+            email=email,
+            specialties=specialties,
+            is_active=True
+        )
+        
+        return Response({
+            "message": f"Professional {name} added successfully",
+            "professional_id": professional.id,
+            "name": professional.name,
+            "specialties": professional.specialties
+        })
+
+    def _list_professionals(self, request):
+        """List available professionals"""
+        professionals = Professional.objects.filter(is_active=True).order_by('name')
+        
+        items = [
+            {
+                "id": p.id,
+                "name": p.name,
+                "specialties": p.specialties,
+                "total_reviews": p.total_reviews,
+                "rating": float(p.rating) if p.rating else 0.0,
+            }
+            for p in professionals
+        ]
+        
+        return Response({
+            "professionals": items,
+            "total_count": len(items)
+        })
+
+    def _match_review(self, request):
+        """Match a student with a professional for review"""
+        discord_id = request.data.get("discord_id")
+        professional_id = request.data.get("professional_id")
+        
+        if not discord_id or not professional_id:
+            return Response({"error": "discord_id and professional_id are required"}, status=400)
+        
+        try:
+            user = User.objects.get(discord_id=str(discord_id))
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=404)
+        
+        try:
+            professional = Professional.objects.get(id=professional_id, is_active=True)
+        except Professional.DoesNotExist:
+            return Response({"error": "Professional not found"}, status=404)
+        
+        # Find pending review request for this student
+        review_request = ReviewRequest.objects.filter(
+            student=user, 
+            status='pending'
+        ).order_by('-submission_date').first()
+        
+        if not review_request:
+            return Response({"error": "No pending review request found for this student"}, status=404)
+        
+        # Assign professional and update status
+        review_request.professional = professional
+        review_request.status = 'matched'
+        review_request.matched_date = timezone.now()
+        review_request.save()
+        
+        return Response({
+            "message": f"Matched {user.username} with {professional.name}",
+            "review_request_id": review_request.id,
+            "student": user.username,
+            "professional": professional.name,
+            "status": review_request.status
+        })
+
+    def _review_stats(self, request):
+        """Get resume review program statistics"""
+        from django.db.models import Count, Avg
+        
+        stats = {
+            "total_requests": ReviewRequest.objects.count(),
+            "pending_requests": ReviewRequest.objects.filter(status='pending').count(),
+            "matched_requests": ReviewRequest.objects.filter(status='matched').count(),
+            "completed_requests": ReviewRequest.objects.filter(status='completed').count(),
+            "cancelled_requests": ReviewRequest.objects.filter(status='cancelled').count(),
+            "total_professionals": Professional.objects.filter(is_active=True).count(),
+            "average_rating": ReviewRequest.objects.filter(rating__isnull=False).aggregate(Avg('rating'))['rating__avg'] or 0,
+        }
+        
+        # Recent activity (last 7 days)
+        from datetime import timedelta
+        recent_date = timezone.now() - timedelta(days=7)
+        stats["recent_requests"] = ReviewRequest.objects.filter(submission_date__gte=recent_date).count()
+        stats["recent_completions"] = ReviewRequest.objects.filter(completed_date__gte=recent_date).count()
+        
+        return Response(stats)
 
 
 class LinkView(APIView):

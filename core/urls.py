@@ -3,7 +3,8 @@ from .views import BotIntegrationView, LinkView
 from rest_framework.routers import DefaultRouter
 from .views import (
     UserViewSet, ActivityViewSet, PointsLogViewSet,
-    IncentiveViewSet, RedemptionViewSet, UserStatusViewSet
+    IncentiveViewSet, RedemptionViewSet, UserStatusViewSet,
+    ProfessionalViewSet, ReviewRequestViewSet
 )
 
 router = DefaultRouter()
@@ -13,6 +14,8 @@ router.register(r'points-logs', PointsLogViewSet, basename='pointslog')
 router.register(r'incentives', IncentiveViewSet)
 router.register(r'redemptions', RedemptionViewSet, basename='redemption')
 router.register(r'user-status', UserStatusViewSet, basename='userstatus')
+router.register(r'professionals', ProfessionalViewSet)
+router.register(r'review-requests', ReviewRequestViewSet, basename='reviewrequest')
 
 urlpatterns = [
     path('api/', include(router.urls)),
