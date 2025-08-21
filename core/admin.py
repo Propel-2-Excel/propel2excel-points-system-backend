@@ -1,6 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
-from .models import User, Activity, PointsLog, Incentive, Redemption, UserStatus, Professional, ReviewRequest
+from django.utils import timezone
+from .models import User, Activity, PointsLog, Incentive, Redemption, UserStatus, Professional, ReviewRequest, ScheduledSession, ProfessionalAvailability
 
 @admin.register(User)
 class CustomUserAdmin(UserAdmin):
@@ -195,3 +196,86 @@ class ReviewRequestAdmin(admin.ModelAdmin):
         updated = queryset.filter(status__in=['pending', 'matched']).update(status='cancelled')
         self.message_user(request, f'{updated} review requests cancelled.')
     cancel_requests.short_description = "Cancel selected requests"
+
+@admin.register(ScheduledSession)
+class ScheduledSessionAdmin(admin.ModelAdmin):
+    list_display = ['id', 'student', 'professional', 'scheduled_time', 'status', 'duration_minutes', 'created_at']
+    list_filter = ['status', 'scheduled_time', 'duration_minutes', 'created_at']
+    search_fields = ['student__username', 'professional__name', 'meeting_link']
+    readonly_fields = ['created_at', 'updated_at']
+    date_hierarchy = 'scheduled_time'
+    
+    fieldsets = (
+        ('Session Details', {
+            'fields': ('review_request', 'student', 'professional', 'scheduled_time', 'duration_minutes')
+        }),
+        ('Meeting Info', {
+            'fields': ('meeting_link', 'calendar_event_id', 'status')
+        }),
+        ('Notes', {
+            'fields': ('admin_notes', 'session_notes')
+        }),
+        ('Timestamps', {
+            'fields': ('created_at', 'updated_at', 'completed_at'),
+            'classes': ('collapse',)
+        })
+    )
+    
+    actions = ['mark_as_completed', 'mark_as_cancelled']
+    
+    def mark_as_completed(self, request, queryset):
+        """Mark sessions as completed"""
+        updated = queryset.filter(status='scheduled').update(
+            status='completed',
+            completed_at=timezone.now()
+        )
+        self.message_user(request, f'{updated} sessions marked as completed.')
+    mark_as_completed.short_description = "Mark selected sessions as completed"
+    
+    def mark_as_cancelled(self, request, queryset):
+        """Mark sessions as cancelled"""
+        updated = queryset.filter(status='scheduled').update(status='cancelled')
+        self.message_user(request, f'{updated} sessions cancelled.')
+    mark_as_cancelled.short_description = "Cancel selected sessions"
+
+@admin.register(ProfessionalAvailability)
+class ProfessionalAvailabilityAdmin(admin.ModelAdmin):
+    list_display = ['id', 'professional', 'start_date', 'end_date', 'time_zone', 'is_active', 'submission_date']
+    list_filter = ['is_active', 'time_zone', 'start_date', 'end_date', 'submission_date']
+    search_fields = ['professional__name', 'professional__email', 'notes']
+    readonly_fields = ['submission_date', 'form_response_id']
+    date_hierarchy = 'start_date'
+    
+    fieldsets = (
+        ('Professional', {
+            'fields': ('professional', 'form_response_id')
+        }),
+        ('Availability Period', {
+            'fields': ('start_date', 'end_date', 'time_zone', 'is_active')
+        }),
+        ('Availability Details', {
+            'fields': ('availability_slots', 'preferred_days', 'notes')
+        }),
+        ('Form Data', {
+            'fields': ('form_data',),
+            'classes': ('collapse',)
+        }),
+        ('Metadata', {
+            'fields': ('submission_date',),
+            'classes': ('collapse',)
+        })
+    )
+    
+    actions = ['activate_availability', 'deactivate_availability']
+    
+    def activate_availability(self, request, queryset):
+        """Activate availability records"""
+        updated = queryset.update(is_active=True)
+        self.message_user(request, f'{updated} availability records activated.')
+    activate_availability.short_description = "Activate selected availability records"
+    
+    def deactivate_availability(self, request, queryset):
+        """Deactivate availability records"""
+        updated = queryset.update(is_active=False)
+        self.message_user(request, f'{updated} availability records deactivated.')
+    deactivate_availability.short_description = "Deactivate selected availability records"

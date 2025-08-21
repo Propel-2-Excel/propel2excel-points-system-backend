@@ -4,13 +4,14 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import authenticate
-from django.db import transaction
+from django.db import transaction, models
 from django.utils import timezone
-from .models import User, Activity, PointsLog, Incentive, Redemption, UserStatus, UserIncentiveUnlock, DiscordLinkCode, Professional, ReviewRequest
+from .models import User, Activity, PointsLog, Incentive, Redemption, UserStatus, UserIncentiveUnlock, DiscordLinkCode, Professional, ReviewRequest, ScheduledSession, ProfessionalAvailability
 from .serializers import (
     UserSerializer, ActivitySerializer, PointsLogSerializer,
     IncentiveSerializer, RedemptionSerializer, UserStatusSerializer, DiscordLinkCodeSerializer,
-    ProfessionalSerializer, ReviewRequestSerializer, ReviewRequestCreateSerializer
+    ProfessionalSerializer, ReviewRequestSerializer, ReviewRequestCreateSerializer,
+    ScheduledSessionSerializer, ProfessionalAvailabilitySerializer
 )
 
 class UserViewSet(viewsets.ModelViewSet):
@@ -399,6 +400,120 @@ class ReviewRequestViewSet(viewsets.ModelViewSet):
         
         return Response(stats)
 
+class ScheduledSessionViewSet(viewsets.ModelViewSet):
+    serializer_class = ScheduledSessionSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_queryset(self):
+        """Users can only see their own sessions, admins see all"""
+        if self.request.user.role == 'admin':
+            return ScheduledSession.objects.all()
+        return ScheduledSession.objects.filter(
+            models.Q(student=self.request.user) | 
+            models.Q(professional__email=self.request.user.email)
+        )
+    
+    def perform_create(self, serializer):
+        """Only admins can create scheduled sessions"""
+        if self.request.user.role != 'admin':
+            raise permissions.PermissionDenied("Only admins can create scheduled sessions")
+        serializer.save()
+    
+    @action(detail=True, methods=['post'])
+    def complete_session(self, request, pk=None):
+        """Mark session as completed and add notes"""
+        session = self.get_object()
+        
+        # Check permissions
+        can_complete = (
+            request.user.role == 'admin' or 
+            session.student == request.user or 
+            (session.professional and session.professional.email == request.user.email)
+        )
+        
+        if not can_complete:
+            return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+        
+        session.status = 'completed'
+        session.completed_at = timezone.now()
+        session.session_notes = request.data.get('session_notes', session.session_notes)
+        session.save()
+        
+        # Also update the related review request
+        session.review_request.status = 'completed'
+        session.review_request.completed_date = timezone.now()
+        session.review_request.review_notes = request.data.get('review_notes', session.review_request.review_notes)
+        session.review_request.save()
+        
+        return Response({
+            'message': 'Session marked as completed',
+            'session': ScheduledSessionSerializer(session).data
+        })
+    
+    @action(detail=True, methods=['post'])
+    def cancel_session(self, request, pk=None):
+        """Cancel a scheduled session"""
+        session = self.get_object()
+        
+        # Check permissions
+        can_cancel = (
+            request.user.role == 'admin' or 
+            session.student == request.user or 
+            (session.professional and session.professional.email == request.user.email)
+        )
+        
+        if not can_cancel:
+            return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+        
+        session.status = 'cancelled'
+        session.admin_notes = request.data.get('reason', 'Session cancelled')
+        session.save()
+        
+        # Update review request status
+        session.review_request.status = 'pending'
+        session.review_request.professional = None
+        session.review_request.scheduled_time = None
+        session.review_request.save()
+        
+        return Response({
+            'message': 'Session cancelled',
+            'session': ScheduledSessionSerializer(session).data
+        })
+
+class ProfessionalAvailabilityViewSet(viewsets.ModelViewSet):
+    serializer_class = ProfessionalAvailabilitySerializer
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_queryset(self):
+        """Filter based on user role"""
+        if self.request.user.role == 'admin':
+            return ProfessionalAvailability.objects.all()
+        # Professionals can only see their own availability
+        return ProfessionalAvailability.objects.filter(professional__email=self.request.user.email)
+    
+    def perform_create(self, serializer):
+        """Only admins and professionals can create availability records"""
+        if self.request.user.role not in ['admin'] and not Professional.objects.filter(email=self.request.user.email).exists():
+            raise permissions.PermissionDenied("Only admins and professionals can create availability records")
+        serializer.save()
+    
+    @action(detail=False, methods=['get'])
+    def active_availability(self, request):
+        """Get active availability for all professionals"""
+        if request.user.role != 'admin':
+            return Response({'error': 'Admin access required'}, status=status.HTTP_403_FORBIDDEN)
+        
+        from django.utils import timezone
+        today = timezone.now().date()
+        
+        active_availability = ProfessionalAvailability.objects.filter(
+            is_active=True,
+            end_date__gte=today
+        ).select_related('professional')
+        
+        serializer = ProfessionalAvailabilitySerializer(active_availability, many=True)
+        return Response(serializer.data)
+
 
 class BotIntegrationView(APIView):
     """Minimal secured endpoints for Discord bot integration.
@@ -459,6 +574,14 @@ class BotIntegrationView(APIView):
             return self._match_review(request)
         if action == "review-stats":
             return self._review_stats(request)
+        if action == "pending-reviews":
+            return self._pending_reviews(request)
+        if action == "suggest-matches":
+            return self._suggest_matches(request)
+        if action == "schedule-session":
+            return self._schedule_session(request)
+        if action == "add-professional-availability":
+            return self._add_professional_availability(request)
 
         return Response({"error": "Unknown action"}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -906,6 +1029,268 @@ class BotIntegrationView(APIView):
         
         return Response(stats)
 
+    def _pending_reviews(self, request):
+        """Get pending review requests with availability data"""
+        pending_requests = ReviewRequest.objects.filter(status='pending').select_related('student').order_by('-submission_date')
+        
+        items = []
+        for req in pending_requests:
+            items.append({
+                "id": req.id,
+                "student_username": req.student.username,
+                "discord_id": req.student.discord_id,
+                "target_industry": req.target_industry,
+                "target_role": req.target_role,
+                "experience_level": req.experience_level,
+                "preferred_times": req.preferred_times,
+                "submission_date": req.submission_date.isoformat(),
+                "days_pending": (timezone.now() - req.submission_date).days,
+            })
+        
+        return Response({
+            "pending_requests": items,
+            "total_count": len(items)
+        })
+    
+    def _suggest_matches(self, request):
+        """Find professionals with overlapping availability for a student"""
+        discord_id = request.data.get("discord_id")
+        if not discord_id:
+            return Response({"error": "discord_id is required"}, status=400)
+        
+        try:
+            user = User.objects.get(discord_id=str(discord_id))
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=404)
+        
+        # Get the student's review request
+        review_request = ReviewRequest.objects.filter(
+            student=user, 
+            status='pending'
+        ).order_by('-submission_date').first()
+        
+        if not review_request:
+            return Response({"error": "No pending review request found for this student"}, status=404)
+        
+        # Get all active professionals with their availability
+        from datetime import datetime, timedelta
+        today = timezone.now().date()
+        
+        professionals_with_availability = ProfessionalAvailability.objects.filter(
+            is_active=True,
+            end_date__gte=today
+        ).select_related('professional')
+        
+        matches = []
+        student_times = review_request.preferred_times or []
+        
+        for prof_avail in professionals_with_availability:
+            professional = prof_avail.professional
+            if not professional.is_active:
+                continue
+                
+            # Enhanced overlap detection using sophisticated matching algorithm
+            try:
+                from availability_matcher import find_availability_matches
+                matches = find_availability_matches(student_times, prof_avail.availability_slots)
+                overlapping_times = [match['student_availability'] + " ↔ " + match['professional_availability'] 
+                                   for match in matches if match['match_score'] > 0.3]
+            except ImportError:
+                # Fallback to simple matching if enhanced matcher not available
+                overlapping_times = self._find_time_overlaps(student_times, prof_avail.availability_slots)
+            
+            if overlapping_times:
+                matches.append({
+                    "professional_id": professional.id,
+                    "professional_name": professional.name,
+                    "specialties": professional.specialties,
+                    "total_reviews": professional.total_reviews,
+                    "rating": float(professional.rating) if professional.rating else 0.0,
+                    "overlapping_times": overlapping_times,
+                    "availability_valid_until": prof_avail.end_date.isoformat(),
+                })
+        
+        # Sort by rating and total reviews
+        matches.sort(key=lambda x: (x['rating'], x['total_reviews']), reverse=True)
+        
+        return Response({
+            "student": user.username,
+            "matches": matches,
+            "total_matches": len(matches),
+            "student_preferred_times": student_times
+        })
+    
+    def _schedule_session(self, request):
+        """Schedule a session between student and professional"""
+        discord_id = request.data.get("discord_id")
+        professional_name = request.data.get("professional_name")
+        scheduled_time_str = request.data.get("scheduled_time")
+        duration_minutes = int(request.data.get("duration_minutes", 30))
+        
+        if not all([discord_id, professional_name, scheduled_time_str]):
+            return Response({"error": "discord_id, professional_name, and scheduled_time are required"}, status=400)
+        
+        try:
+            user = User.objects.get(discord_id=str(discord_id))
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=404)
+        
+        try:
+            professional = Professional.objects.get(name__icontains=professional_name, is_active=True)
+        except Professional.DoesNotExist:
+            return Response({"error": "Professional not found"}, status=404)
+        except Professional.MultipleObjectsReturned:
+            return Response({"error": "Multiple professionals found with that name. Be more specific."}, status=400)
+        
+        # Find pending review request
+        review_request = ReviewRequest.objects.filter(
+            student=user, 
+            status='pending'
+        ).order_by('-submission_date').first()
+        
+        if not review_request:
+            return Response({"error": "No pending review request found for this student"}, status=404)
+        
+        # Parse scheduled time
+        try:
+            from dateutil import parser
+            scheduled_time = parser.parse(scheduled_time_str)
+        except:
+            return Response({"error": "Invalid date format. Use format like 'Monday 2:00 PM' or '2024-01-15 14:00'"}, status=400)
+        
+        # Create scheduled session
+        with transaction.atomic():
+            session = ScheduledSession.objects.create(
+                review_request=review_request,
+                student=user,
+                professional=professional,
+                scheduled_time=scheduled_time,
+                duration_minutes=duration_minutes
+            )
+            
+            # Update review request status
+            review_request.professional = professional
+            review_request.status = 'scheduled'
+            review_request.scheduled_time = scheduled_time
+            review_request.matched_date = timezone.now()
+            review_request.save()
+            
+            # Create calendar event if calendar integration is available
+            try:
+                from calendar_integration import create_review_session_event
+                
+                # Get email addresses
+                student_email = user.email or f"{user.username}@example.com"
+                professional_email = professional.email
+                
+                # Create calendar event
+                event_id = create_review_session_event(
+                    student_email=student_email,
+                    professional_email=professional_email,
+                    start_time=scheduled_time,
+                    duration_minutes=duration_minutes,
+                    meeting_title=f"Resume Review Session - {user.username}",
+                    meeting_description=f"Resume review session between {user.username} and {professional.name}"
+                )
+                
+                if event_id:
+                    session.calendar_event_id = event_id
+                    session.save()
+                    
+            except ImportError:
+                # Calendar integration not available
+                pass
+            except Exception as e:
+                # Log calendar error but don't fail the session creation
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Failed to create calendar event: {e}")
+        
+        return Response({
+            "message": f"Session scheduled between {user.username} and {professional.name}",
+            "session_id": session.id,
+            "scheduled_time": session.scheduled_time.isoformat(),
+            "duration_minutes": session.duration_minutes,
+            "status": session.status
+        })
+    
+    def _add_professional_availability(self, request):
+        """Add professional availability from Google Form response"""
+        professional_id = request.data.get("professional_id")
+        form_response_id = request.data.get("form_response_id")
+        form_data = request.data.get("form_data", {})
+        availability_slots = request.data.get("availability_slots", [])
+        start_date = request.data.get("start_date")
+        end_date = request.data.get("end_date")
+        
+        if not all([professional_id, form_response_id, start_date, end_date]):
+            return Response({"error": "professional_id, form_response_id, start_date, and end_date are required"}, status=400)
+        
+        try:
+            professional = Professional.objects.get(id=professional_id, is_active=True)
+        except Professional.DoesNotExist:
+            return Response({"error": "Professional not found"}, status=404)
+        
+        try:
+            from datetime import datetime
+            start_date_obj = datetime.strptime(start_date, '%Y-%m-%d').date()
+            end_date_obj = datetime.strptime(end_date, '%Y-%m-%d').date()
+        except ValueError:
+            return Response({"error": "Invalid date format. Use YYYY-MM-DD"}, status=400)
+        
+        # Create or update availability record
+        availability, created = ProfessionalAvailability.objects.update_or_create(
+            professional=professional,
+            form_response_id=form_response_id,
+            defaults={
+                'form_data': form_data,
+                'availability_slots': availability_slots,
+                'preferred_days': form_data.get('preferred_days', []),
+                'time_zone': form_data.get('time_zone', 'UTC'),
+                'start_date': start_date_obj,
+                'end_date': end_date_obj,
+                'notes': form_data.get('notes', ''),
+                'is_active': True
+            }
+        )
+        
+        return Response({
+            "message": f"Availability {'created' if created else 'updated'} for {professional.name}",
+            "availability_id": availability.id,
+            "professional": professional.name,
+            "valid_period": f"{start_date} to {end_date}",
+            "slots_count": len(availability_slots)
+        })
+    
+    def _find_time_overlaps(self, student_times, professional_times):
+        """Simple time overlap detection - can be enhanced with better parsing"""
+        overlaps = []
+        
+        # Convert to lowercase for easier matching
+        student_times_lower = [t.lower() for t in student_times if t]
+        professional_times_lower = [t.lower() for t in professional_times if t]
+        
+        # Look for common days/times
+        days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+        times = ['morning', 'afternoon', 'evening', '9', '10', '11', '12', '1', '2', '3', '4', '5']
+        
+        for student_time in student_times_lower:
+            for professional_time in professional_times_lower:
+                # Check for exact matches or partial matches
+                if student_time == professional_time:
+                    overlaps.append(student_time)
+                else:
+                    # Check for day/time component matches
+                    for day in days:
+                        if day in student_time and day in professional_time:
+                            for time in times:
+                                if time in student_time and time in professional_time:
+                                    overlap = f"{day} {time}"
+                                    if overlap not in overlaps:
+                                        overlaps.append(overlap)
+        
+        return overlaps
+
 
 class LinkView(APIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -1055,3 +1440,137 @@ class FormSubmissionView(APIView):
                     availability.extend(availability_data)
         
         return availability
+
+class ProfessionalAvailabilityFormView(APIView):
+    """Endpoint to receive Professional Availability Google Form submissions"""
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        from django.conf import settings
+        
+        # Check webhook authentication token
+        webhook_secret = request.headers.get("X-Form-Secret", "")
+        expected_secret = getattr(settings, 'FORM_WEBHOOK_SECRET', None)
+        
+        if not expected_secret:
+            return Response({"error": "Webhook secret not configured"}, status=500)
+            
+        if webhook_secret != expected_secret:
+            return Response({"error": "Unauthorized webhook"}, status=401)
+
+        # Extract form data
+        form_data = request.data
+        form_type = form_data.get('form_type')
+        response_id = form_data.get('response_id')
+        respondent_email = form_data.get('respondent_email')
+        responses = form_data.get('responses', {})
+        parsed_data = form_data.get('parsed_data', {})
+        timestamp = form_data.get('timestamp')
+
+        if form_type != 'professional_availability':
+            return Response({"error": "Invalid form type"}, status=400)
+
+        if not response_id or not responses:
+            return Response({"error": "Missing required form data"}, status=400)
+
+        try:
+            # Find or create professional
+            professional_name = parsed_data.get('name', '')
+            professional_email = parsed_data.get('email', '')
+            
+            if not professional_name or not professional_email:
+                return Response({"error": "Professional name and email are required"}, status=400)
+            
+            # Get or create professional
+            professional, created = Professional.objects.get_or_create(
+                email=professional_email,
+                defaults={
+                    'name': professional_name,
+                    'specialties': parsed_data.get('specializations', ''),
+                    'bio': f"{parsed_data.get('professional_title', '')} at {parsed_data.get('company', '')}",
+                    'is_active': True
+                }
+            )
+            
+            # Update professional info if not created
+            if not created:
+                professional.name = professional_name
+                professional.specialties = parsed_data.get('specializations', professional.specialties)
+                professional.bio = f"{parsed_data.get('professional_title', '')} at {parsed_data.get('company', '')}"
+                professional.save()
+
+            # Parse availability dates
+            try:
+                from datetime import datetime
+                start_date_str = parsed_data.get('start_date', '')
+                end_date_str = parsed_data.get('end_date', '')
+                
+                if start_date_str and end_date_str:
+                    # Try multiple date formats
+                    for date_format in ['%Y-%m-%d', '%m/%d/%Y', '%d/%m/%Y']:
+                        try:
+                            start_date = datetime.strptime(start_date_str, date_format).date()
+                            end_date = datetime.strptime(end_date_str, date_format).date()
+                            break
+                        except ValueError:
+                            continue
+                    else:
+                        # If no format worked, use a default range
+                        from datetime import date, timedelta
+                        start_date = date.today()
+                        end_date = start_date + timedelta(weeks=4)
+                else:
+                    # Default to 4 weeks from today
+                    from datetime import date, timedelta
+                    start_date = date.today()
+                    end_date = start_date + timedelta(weeks=4)
+                    
+            except Exception:
+                # Fallback to default dates
+                from datetime import date, timedelta
+                start_date = date.today()
+                end_date = start_date + timedelta(weeks=4)
+
+            # Parse availability slots
+            time_slots = parsed_data.get('time_slots', [])
+            preferred_days = parsed_data.get('preferred_days', [])
+            specific_times = parsed_data.get('specific_times', '')
+            
+            # Combine structured and free-form availability
+            availability_slots = time_slots.copy() if isinstance(time_slots, list) else []
+            if specific_times:
+                availability_slots.append(specific_times)
+
+            # Create or update availability record
+            availability, created = ProfessionalAvailability.objects.update_or_create(
+                professional=professional,
+                form_response_id=response_id,
+                defaults={
+                    'form_data': responses,
+                    'availability_slots': availability_slots,
+                    'preferred_days': preferred_days if isinstance(preferred_days, list) else [],
+                    'time_zone': parsed_data.get('timezone', 'UTC'),
+                    'start_date': start_date,
+                    'end_date': end_date,
+                    'notes': parsed_data.get('notes', ''),
+                    'is_active': True
+                }
+            )
+
+            return Response({
+                "status": "success",
+                "message": f"Professional availability received for {professional_name}",
+                "professional_id": professional.id,
+                "availability_id": availability.id,
+                "created": created,
+                "valid_period": f"{start_date} to {end_date}",
+                "slots_count": len(availability_slots)
+            })
+
+        except Exception as e:
+            # Log the error but don't expose internal details
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Professional availability form submission error: {e}")
+            
+            return Response({"error": "Internal server error"}, status=500)

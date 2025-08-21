@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import User, Activity, PointsLog, Incentive, Redemption, UserStatus, UserIncentiveUnlock, DiscordLinkCode, Professional, ReviewRequest
+from .models import User, Activity, PointsLog, Incentive, Redemption, UserStatus, UserIncentiveUnlock, DiscordLinkCode, Professional, ReviewRequest, ScheduledSession, ProfessionalAvailability
 
 class UserSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, required=False)
@@ -153,3 +153,47 @@ class ReviewRequestCreateSerializer(serializers.ModelSerializer):
             'student', 'target_industry', 'target_role', 'experience_level',
             'preferred_times', 'priority', 'form_data', 'admin_notes'
         ]
+
+class ScheduledSessionSerializer(serializers.ModelSerializer):
+    student_username = serializers.CharField(source='student.username', read_only=True)
+    professional_name = serializers.CharField(source='professional.name', read_only=True)
+    review_request_id = serializers.IntegerField(source='review_request.id', read_only=True)
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    
+    class Meta:
+        model = ScheduledSession
+        fields = [
+            'id', 'review_request', 'review_request_id', 'student', 'student_username',
+            'professional', 'professional_name', 'scheduled_time', 'duration_minutes',
+            'meeting_link', 'calendar_event_id', 'status', 'status_display',
+            'admin_notes', 'session_notes', 'created_at', 'updated_at', 'completed_at'
+        ]
+        read_only_fields = [
+            'id', 'created_at', 'updated_at', 'student_username', 'professional_name',
+            'review_request_id', 'status_display'
+        ]
+
+class ProfessionalAvailabilitySerializer(serializers.ModelSerializer):
+    professional_name = serializers.CharField(source='professional.name', read_only=True)
+    days_valid = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = ProfessionalAvailability
+        fields = [
+            'id', 'professional', 'professional_name', 'form_response_id',
+            'form_data', 'availability_slots', 'preferred_days', 'time_zone',
+            'start_date', 'end_date', 'submission_date', 'is_active',
+            'notes', 'days_valid'
+        ]
+        read_only_fields = [
+            'id', 'submission_date', 'professional_name', 'days_valid'
+        ]
+    
+    def get_days_valid(self, obj):
+        from django.utils import timezone
+        if not obj.is_active:
+            return 0
+        today = timezone.now().date()
+        if today > obj.end_date:
+            return 0
+        return (obj.end_date - max(today, obj.start_date)).days

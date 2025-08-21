@@ -282,3 +282,74 @@ class ReviewRequest(models.Model):
                         self.professional.total_reviews += 1
                         self.professional.save()
         super().save(*args, **kwargs)
+
+class ScheduledSession(models.Model):
+    """Scheduled meetings between students and professionals"""
+    STATUS_CHOICES = [
+        ('scheduled', 'Scheduled'),
+        ('completed', 'Completed'),
+        ('cancelled', 'Cancelled'),
+        ('no_show', 'No Show'),
+    ]
+
+    review_request = models.OneToOneField(ReviewRequest, on_delete=models.CASCADE, related_name='scheduled_session')
+    student = models.ForeignKey(User, on_delete=models.CASCADE, related_name='student_sessions')
+    professional = models.ForeignKey(Professional, on_delete=models.CASCADE, related_name='professional_sessions')
+    
+    # Session details
+    scheduled_time = models.DateTimeField(help_text="Scheduled meeting time")
+    duration_minutes = models.IntegerField(default=30, help_text="Session duration in minutes")
+    meeting_link = models.URLField(blank=True, help_text="Video call link (Zoom, Google Meet, etc.)")
+    calendar_event_id = models.CharField(max_length=255, blank=True, help_text="Google Calendar event ID")
+    
+    # Status and notes
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='scheduled')
+    admin_notes = models.TextField(blank=True, help_text="Admin notes about the session")
+    session_notes = models.TextField(blank=True, help_text="Notes from the actual session")
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'scheduled_sessions'
+        ordering = ['-scheduled_time']
+
+    def __str__(self):
+        return f"{self.student.username} <-> {self.professional.name} at {self.scheduled_time}"
+    
+    def save(self, *args, **kwargs):
+        # Update related review request status
+        if self.pk is None:  # New session
+            self.review_request.status = 'scheduled'
+            self.review_request.scheduled_time = self.scheduled_time
+            self.review_request.save()
+        super().save(*args, **kwargs)
+
+class ProfessionalAvailability(models.Model):
+    """Professional availability responses from Google Forms"""
+    professional = models.ForeignKey(Professional, on_delete=models.CASCADE, related_name='availability_responses')
+    form_response_id = models.CharField(max_length=255, unique=True, help_text="Google Form response ID")
+    
+    # Form data
+    form_data = models.JSONField(default=dict, help_text="Complete form response data")
+    availability_slots = models.JSONField(default=list, help_text="Parsed availability time slots")
+    preferred_days = models.JSONField(default=list, help_text="Preferred days of week")
+    time_zone = models.CharField(max_length=50, default='UTC', help_text="Professional's timezone")
+    
+    # Availability periods
+    start_date = models.DateField(help_text="Start of availability period")
+    end_date = models.DateField(help_text="End of availability period")
+    
+    # Metadata
+    submission_date = models.DateTimeField(auto_now_add=True)
+    is_active = models.BooleanField(default=True)
+    notes = models.TextField(blank=True, help_text="Additional notes from professional")
+
+    class Meta:
+        db_table = 'professional_availability'
+        ordering = ['-submission_date']
+
+    def __str__(self):
+        return f"{self.professional.name} - {self.start_date} to {self.end_date}"
