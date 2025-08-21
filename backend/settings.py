@@ -174,3 +174,6 @@ SIMPLE_JWT = {
 # Shared secret for Discord bot → backend integration
 BOT_SHARED_SECRET = env("BOT_SHARED_SECRET", default="")
 
+# Shared secret for Google Form webhooks
+FORM_WEBHOOK_SECRET = env("FORM_WEBHOOK_SECRET", default="")
+

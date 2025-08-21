@@ -1,5 +1,5 @@
 from django.urls import path, include
-from .views import BotIntegrationView, LinkView
+from .views import BotIntegrationView, LinkView, FormSubmissionView
 from rest_framework.routers import DefaultRouter
 from .views import (
     UserViewSet, ActivityViewSet, PointsLogViewSet,
@@ -22,4 +22,5 @@ urlpatterns = [
     path('api/bot/', BotIntegrationView.as_view(), name='bot-integration'),
     path('api/link/start', LinkView.as_view(), name='link-start'),
     path('api/link/status', LinkView.as_view(), name='link-status'),
+    path('api/form-submission/', FormSubmissionView.as_view(), name='form-submission'),
 ] 

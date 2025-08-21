@@ -4,8 +4,13 @@ from .models import User, Activity, PointsLog, Incentive, Redemption, UserStatus
 
 @admin.register(User)
 class CustomUserAdmin(UserAdmin):
-    list_display = ['username', 'email', 'role', 'company', 'university', 'total_points', 'created_at']
-    list_filter = ['role', 'company', 'university', 'created_at']
+    list_display = [
+        'username', 'email', 'role', 'company', 'university', 'media_consent',
+        'onboarding_completed', 'total_points', 'created_at'
+    ]
+    list_filter = [
+        'role', 'media_consent', 'onboarding_completed', 'company', 'university', 'created_at'
+    ]
     search_fields = ['username', 'email', 'first_name', 'last_name']
     ordering = ['-created_at']
     
@@ -13,12 +18,23 @@ class CustomUserAdmin(UserAdmin):
         ('Propel2Excel Info', {
             'fields': ('role', 'company', 'university', 'discord_id', 'total_points')
         }),
+        ('Media Consent', {
+            'fields': ('media_consent', 'media_consent_date', 'media_consent_ip', 'media_consent_user_agent')
+        }),
+        ('Onboarding', {
+            'fields': ('onboarding_completed', 'onboarding_completed_date')
+        }),
     )
     add_fieldsets = UserAdmin.add_fieldsets + (
         ('Propel2Excel Info', {
             'fields': ('role', 'company', 'university', 'discord_id')
         }),
     )
+    
+    readonly_fields = [
+        'media_consent_date', 'media_consent_ip', 'media_consent_user_agent',
+        'onboarding_completed_date'
+    ]
 
 @admin.register(Activity)
 class ActivityAdmin(admin.ModelAdmin):

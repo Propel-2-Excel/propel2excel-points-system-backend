@@ -9,9 +9,16 @@ class UserSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'username', 'email', 'first_name', 'last_name',
             'role', 'company', 'university', 'discord_id',
-            'total_points', 'created_at', 'updated_at', 'password'
+            'total_points', 'created_at', 'updated_at', 'password',
+            
+            # New consent fields
+            'media_consent', 'media_consent_date', 'media_consent_ip',
+            'media_consent_user_agent', 'onboarding_completed', 'onboarding_completed_date'
         ]
-        read_only_fields = ['id', 'total_points', 'created_at', 'updated_at']
+        read_only_fields = [
+            'id', 'total_points', 'created_at', 'updated_at', 'media_consent_date',
+            'media_consent_ip', 'media_consent_user_agent', 'onboarding_completed_date'
+        ]
     
     def create(self, validated_data):
         password = validated_data.pop('password', None)

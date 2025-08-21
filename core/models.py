@@ -19,6 +19,40 @@ class User(AbstractUser):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
+    # Media Consent Fields
+    media_consent = models.BooleanField(
+        default=None, 
+        null=True, 
+        blank=True,
+        help_text="User's consent to be featured in P2E media materials"
+    )
+    media_consent_date = models.DateTimeField(
+        null=True, 
+        blank=True,
+        help_text="Date when consent decision was made"
+    )
+    media_consent_ip = models.GenericIPAddressField(
+        null=True, 
+        blank=True,
+        help_text="IP address when consent decision was made"
+    )
+    media_consent_user_agent = models.TextField(
+        null=True, 
+        blank=True,
+        help_text="User agent string when consent decision was made"
+    )
+    
+    # Onboarding Completion
+    onboarding_completed = models.BooleanField(
+        default=False,
+        help_text="Whether user has completed the onboarding flow"
+    )
+    onboarding_completed_date = models.DateTimeField(
+        null=True, 
+        blank=True,
+        help_text="Date when onboarding was completed"
+    )
+    
     class Meta:
         db_table = 'users'
     

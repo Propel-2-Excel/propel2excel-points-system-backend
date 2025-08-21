@@ -1,5 +1,5 @@
 from rest_framework import viewsets, status, permissions
-from rest_framework.decorators import action
+from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -65,6 +65,65 @@ class UserViewSet(viewsets.ModelViewSet):
         """Get current user profile"""
         serializer = self.get_serializer(request.user)
         return Response(serializer.data)
+    
+    @action(detail=False, methods=['post'])
+    def consent(self, request):
+        """Update user's media consent status"""
+        try:
+            user = request.user
+            media_consent = request.data.get('media_consent')
+            
+            if media_consent is None:
+                return Response({
+                    'error': 'media_consent field is required'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Update consent fields
+            user.media_consent = media_consent
+            user.media_consent_date = timezone.now()
+            user.media_consent_ip = request.META.get('REMOTE_ADDR')
+            user.media_consent_user_agent = request.META.get('HTTP_USER_AGENT', '')
+            user.save()
+            
+            return Response({
+                'success': True,
+                'message': 'Consent status updated successfully',
+                'data': {
+                    'media_consent': user.media_consent,
+                    'media_consent_date': user.media_consent_date.isoformat(),
+                    'onboarding_step': 'consent_completed'
+                }
+            })
+            
+        except Exception as e:
+            return Response({
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=False, methods=['post'])
+    def complete_onboarding(self, request):
+        """Mark user's onboarding as complete"""
+        try:
+            user = request.user
+            
+            # Mark onboarding as complete
+            user.onboarding_completed = True
+            user.onboarding_completed_date = timezone.now()
+            user.save()
+            
+            return Response({
+                'success': True,
+                'message': 'Onboarding marked as complete',
+                'data': {
+                    'onboarding_completed': user.onboarding_completed,
+                    'completion_date': user.onboarding_completed_date.isoformat()
+                }
+            })
+            
+        except Exception as e:
+            return Response({
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     @action(detail=True, methods=['post'])
     def add_points(self, request, pk=None):
@@ -884,3 +943,115 @@ def _check_and_record_unlocks(user: User):
     to_create = [UserIncentiveUnlock(user=user, incentive=inc) for inc in qualifying if inc.id not in existing]
     if to_create:
         UserIncentiveUnlock.objects.bulk_create(to_create, ignore_conflicts=True)
+
+
+class FormSubmissionView(APIView):
+    """Endpoint to receive Google Form submissions via Apps Script webhook"""
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        from django.conf import settings
+        
+        # Check webhook authentication token
+        webhook_secret = request.headers.get("X-Form-Secret", "")
+        expected_secret = getattr(settings, 'FORM_WEBHOOK_SECRET', None)
+        
+        if not expected_secret:
+            return Response({"error": "Webhook secret not configured"}, status=500)
+            
+        if webhook_secret != expected_secret:
+            return Response({"error": "Unauthorized webhook"}, status=401)
+
+        # Extract form data
+        form_data = request.data
+        student_email = form_data.get('student_email')
+        responses = form_data.get('responses', {})
+        timestamp = form_data.get('timestamp')
+
+        if not student_email or not responses:
+            return Response({"error": "Missing required form data"}, status=400)
+
+        try:
+            # Try to find user by email first, then by discord_id if available
+            user = None
+            discord_id = responses.get('Discord Username') or responses.get('Discord ID')
+            
+            if discord_id:
+                # Clean discord ID (remove @ symbols, spaces, etc.)
+                discord_id = discord_id.strip().replace('@', '').replace('<', '').replace('>', '')
+                try:
+                    user = User.objects.get(discord_id=discord_id)
+                except User.DoesNotExist:
+                    pass
+            
+            if not user:
+                try:
+                    user = User.objects.get(email=student_email)
+                except User.DoesNotExist:
+                    # Create new user if not found
+                    username = student_email.split('@')[0]
+                    user = User.objects.create(
+                        username=username,
+                        email=student_email,
+                        role='student',
+                        discord_id=discord_id if discord_id else None
+                    )
+
+            # Create or update ReviewRequest
+            review_request, created = ReviewRequest.objects.get_or_create(
+                student=user,
+                status='pending',
+                defaults={
+                    'form_data': responses,
+                    'target_industry': responses.get('Target Industry', ''),
+                    'target_role': responses.get('Target Role', ''),
+                    'experience_level': responses.get('Experience Level', ''),
+                    'preferred_times': self._extract_availability(responses),
+                }
+            )
+
+            if not created:
+                # Update existing pending request with new data
+                review_request.form_data = responses
+                review_request.target_industry = responses.get('Target Industry', '')
+                review_request.target_role = responses.get('Target Role', '')
+                review_request.experience_level = responses.get('Experience Level', '')
+                review_request.preferred_times = self._extract_availability(responses)
+                review_request.save()
+
+            return Response({
+                "status": "success",
+                "message": f"Form submission received for {student_email}",
+                "review_request_id": review_request.id,
+                "created": created
+            })
+
+        except Exception as e:
+            # Log the error but don't expose internal details
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Form submission error: {e}")
+            
+            return Response({"error": "Internal server error"}, status=500)
+
+    def _extract_availability(self, responses):
+        """Extract availability data from form responses"""
+        availability = []
+        
+        # Look for common availability field names
+        availability_fields = [
+            'Availability', 'Available Times', 'Preferred Times', 
+            'When are you available?', 'Available Days/Times'
+        ]
+        
+        for field in availability_fields:
+            if field in responses:
+                availability_data = responses[field]
+                if isinstance(availability_data, str):
+                    # Split by common delimiters
+                    times = [time.strip() for time in availability_data.replace(',', ';').split(';')]
+                    availability.extend(times)
+                elif isinstance(availability_data, list):
+                    availability.extend(availability_data)
+        
+        return availability
