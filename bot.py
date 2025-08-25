@@ -9,6 +9,7 @@ from datetime import datetime
 import math
 import aiohttp
 import json
+from aiohttp import web
 
 # Set up logging
 logging.basicConfig(
@@ -74,6 +75,58 @@ async def register_user_with_backend(discord_id: str, display_name: str, usernam
     except Exception as e:
         logger.error(f"❌ Error registering user {display_name} ({discord_id}) with backend: {e}")
         return False
+
+async def validate_discord_username(discord_username: str):
+    """Validate if a Discord username exists in the current server"""
+    try:
+        if not discord_username:
+            return {"valid": False, "message": "Discord username is required"}
+        
+        # Get the guild (server) - assumes bot is only in one server
+        guild = None
+        for g in bot.guilds:
+            guild = g
+            break
+            
+        if not guild:
+            return {"valid": False, "message": "Bot is not connected to any Discord server"}
+        
+        # Search for the user by username (can include discriminator)
+        username_parts = discord_username.split('#')
+        base_username = username_parts[0]
+        discriminator = username_parts[1] if len(username_parts) > 1 else None
+        
+        # Search through guild members for UNIQUE USERNAME match
+        # Discord usernames are unique, so we only need to check the actual username
+        
+        for member in guild.members:
+            # Check against unique Discord username (with optional discriminator)
+            if member.name.lower() == base_username.lower():
+                # If discriminator provided, verify it matches
+                if discriminator is not None:
+                    if member.discriminator == discriminator:
+                        return {
+                            "valid": True, 
+                            "message": f"User found in {guild.name}", 
+                            "discord_id": str(member.id),
+                            "display_name": member.display_name,
+                            "username": f"{member.name}#{member.discriminator}"
+                        }
+                else:
+                    # No discriminator provided, username match is sufficient (usernames are unique)
+                    return {
+                        "valid": True, 
+                        "message": f"User found in {guild.name}", 
+                        "discord_id": str(member.id),
+                        "display_name": member.display_name,
+                        "username": f"{member.name}#{member.discriminator}"
+                    }
+        
+        return {"valid": False, "message": f"User '{discord_username}' not found in {guild.name}"}
+        
+    except Exception as e:
+        logger.error(f"Error validating Discord username '{discord_username}': {e}")
+        return {"valid": False, "message": "Error validating Discord username"}
 
 async def update_user_points_in_backend(discord_id: str, points: int, action: str):
     """Update user points in the backend API"""
@@ -565,10 +618,12 @@ async def link(ctx, code: str = None):
         return
     try:
         async with aiohttp.ClientSession() as session:
+            # Include Discord username for verification security
             payload = {
                 "action": "link",
                 "code": code,
                 "discord_id": str(ctx.author.id),
+                "discord_username": f"{ctx.author.name}#{ctx.author.discriminator}"
             }
             async with session.post(
                 f"{BACKEND_API_URL}/api/bot/",
@@ -579,7 +634,12 @@ async def link(ctx, code: str = None):
                 }
             ) as response:
                 if response.status == 200:
-                    await ctx.send("✅ Successfully linked your Discord to your website account.")
+                    data = await response.json()
+                    if data.get('verified'):
+                        await ctx.send("✅ Successfully verified and linked your Discord account to your website account!")
+                        await ctx.send("🎉 You can now use all Discord bot features and earn points!")
+                    else:
+                        await ctx.send("✅ Successfully linked your Discord to your website account.")
                 else:
                     raw = await response.text()
                     # Log full backend error for diagnostics
@@ -687,10 +747,54 @@ async def on_command_error(ctx, error):
         logger.error(f"Unhandled command error: {error}")
         await ctx.send("❌ An unexpected error occurred while processing your command.")
 
+# HTTP Server for Discord validation
+async def validate_handler(request):
+    """HTTP endpoint to validate Discord usernames"""
+    try:
+        # Check authentication
+        auth_header = request.headers.get('X-Bot-Secret', '')
+        if not BOT_SHARED_SECRET or auth_header != BOT_SHARED_SECRET:
+            return web.json_response({"error": "Unauthorized"}, status=401)
+        
+        data = await request.json()
+        discord_username = data.get('discord_username')
+        
+        if not discord_username:
+            return web.json_response({"error": "discord_username is required"}, status=400)
+        
+        # Validate the Discord username
+        result = await validate_discord_username(discord_username)
+        
+        return web.json_response(result)
+        
+    except Exception as e:
+        logger.error(f"Error in validate_handler: {e}")
+        return web.json_response({"error": "Internal server error"}, status=500)
+
+async def create_http_server():
+    """Create and start the HTTP server for bot API"""
+    app = web.Application()
+    app.router.add_post('/validate-discord', validate_handler)
+    
+    # Get port from environment or default
+    port = int(os.getenv('BOT_HTTP_PORT', 8001))
+    
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, 'localhost', port)
+    await site.start()
+    
+    logger.info(f"🌐 Bot HTTP server started on http://localhost:{port}")
+    return runner
+
 # Graceful shutdown
+http_runner = None
+
 async def shutdown():
     """Graceful shutdown function"""
     logger.info("🛑 Shutting down bot...")
+    if http_runner:
+        await http_runner.cleanup()
     await bot.close()
 
 # Signal handlers for graceful shutdown
@@ -703,14 +807,32 @@ signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 
 # Main execution
-if __name__ == "__main__":
+async def main():
+    """Main function to run bot and HTTP server concurrently"""
+    global http_runner
+    
     try:
         logger.info("🤖 Starting Discord Bot...")
         logger.info(f"📋 Bot will use prefix: !")
         logger.info(f"🔗 Connecting to Discord...")
         
-        bot.run(TOKEN, log_handler=None)  # Disable discord.py's default logging
+        # Start HTTP server
+        http_runner = await create_http_server()
         
+        # Start bot
+        await bot.start(TOKEN)
+        
+    except KeyboardInterrupt:
+        logger.info("🛑 Bot stopped by user")
+    except Exception as e:
+        logger.error(f"❌ Fatal error: {e}")
+        sys.exit(1)
+    finally:
+        await shutdown()
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
     except KeyboardInterrupt:
         logger.info("🛑 Bot stopped by user")
     except Exception as e:

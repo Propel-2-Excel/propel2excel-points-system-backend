@@ -15,9 +15,61 @@ class User(AbstractUser):
     company = models.CharField(max_length=100, blank=True, null=True)
     university = models.CharField(max_length=100, blank=True, null=True)
     discord_id = models.CharField(max_length=50, blank=True, null=True)
+    
+    # Discord verification fields
+    discord_username_unverified = models.CharField(
+        max_length=50, 
+        blank=True, 
+        null=True,
+        help_text="Discord username provided during registration (unverified)"
+    )
+    discord_verified = models.BooleanField(
+        default=False,
+        help_text="Whether the Discord account has been verified via bot"
+    )
+    discord_verified_at = models.DateTimeField(
+        blank=True, 
+        null=True,
+        help_text="When Discord verification was completed"
+    )
+    
     total_points = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    
+    # Media Consent Fields
+    media_consent = models.BooleanField(
+        default=None, 
+        null=True, 
+        blank=True,
+        help_text="User's consent to be featured in P2E media materials"
+    )
+    media_consent_date = models.DateTimeField(
+        null=True, 
+        blank=True,
+        help_text="Date when consent decision was made"
+    )
+    media_consent_ip = models.GenericIPAddressField(
+        null=True, 
+        blank=True,
+        help_text="IP address when consent decision was made"
+    )
+    media_consent_user_agent = models.TextField(
+        null=True, 
+        blank=True,
+        help_text="User agent string when consent decision was made"
+    )
+    
+    # Onboarding Completion
+    onboarding_completed = models.BooleanField(
+        default=False,
+        help_text="Whether user has completed the onboarding flow"
+    )
+    onboarding_completed_date = models.DateTimeField(
+        null=True, 
+        blank=True,
+        help_text="Date when onboarding was completed"
+    )
     
     class Meta:
         db_table = 'users'
@@ -29,6 +81,7 @@ class Activity(models.Model):
     """Points-earning activities"""
     ACTIVITY_TYPES = [
         ('resume_upload', 'Resume Upload'),
+        ('resume_review_request', 'Resume Review Request'),
         ('event_attendance', 'Event Attendance'),
         ('resource_share', 'Resource Share'),
         ('like_interaction', 'Like/Interaction'),
@@ -37,7 +90,7 @@ class Activity(models.Model):
     ]
     
     name = models.CharField(max_length=100)
-    activity_type = models.CharField(max_length=20, choices=ACTIVITY_TYPES)
+    activity_type = models.CharField(max_length=25, choices=ACTIVITY_TYPES)
     points_value = models.IntegerField()
     description = models.TextField(blank=True)
     is_active = models.BooleanField(default=True)
@@ -158,3 +211,163 @@ class DiscordLinkCode(models.Model):
     def __str__(self):
         status = 'used' if self.used_at else 'active'
         return f"LinkCode({self.code}) for {self.user.username} [{status}]"
+
+class Professional(models.Model):
+    """Professional reviewers for resume review system"""
+    name = models.CharField(max_length=100)
+    email = models.EmailField()
+    specialties = models.TextField(help_text="Industries or specializations (e.g., Tech, Finance, Consulting)")
+    bio = models.TextField(blank=True, help_text="Professional background and experience")
+    availability = models.JSONField(default=dict, help_text="Availability preferences and schedule")
+    is_active = models.BooleanField(default=True)
+    total_reviews = models.IntegerField(default=0)
+    rating = models.DecimalField(max_digits=3, decimal_places=2, default=0.00, help_text="Average rating from students")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'professionals'
+        ordering = ['name']
+
+    def __str__(self):
+        return f"{self.name} - {self.specialties}"
+
+class ReviewRequest(models.Model):
+    """Resume review requests from students"""
+    STATUS_CHOICES = [
+        ('pending', 'Pending Match'),
+        ('matched', 'Matched with Professional'),
+        ('scheduled', 'Review Scheduled'),
+        ('completed', 'Review Completed'),
+        ('cancelled', 'Cancelled'),
+    ]
+
+    PRIORITY_CHOICES = [
+        ('low', 'Low'),
+        ('medium', 'Medium'),
+        ('high', 'High'),
+        ('urgent', 'Urgent'),
+    ]
+
+    student = models.ForeignKey(User, on_delete=models.CASCADE, related_name='review_requests')
+    professional = models.ForeignKey(Professional, on_delete=models.SET_NULL, null=True, blank=True, related_name='assigned_reviews')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    priority = models.CharField(max_length=10, choices=PRIORITY_CHOICES, default='medium')
+    
+    # Form submission data
+    form_data = models.JSONField(default=dict, help_text="Data from Google Form submission")
+    target_industry = models.CharField(max_length=100, blank=True)
+    target_role = models.CharField(max_length=100, blank=True)
+    experience_level = models.CharField(max_length=50, blank=True)
+    
+    # Scheduling
+    preferred_times = models.JSONField(default=list, help_text="Student's preferred time slots")
+    scheduled_time = models.DateTimeField(null=True, blank=True)
+    session_duration = models.IntegerField(default=30, help_text="Duration in minutes")
+    
+    # Review details
+    review_notes = models.TextField(blank=True, help_text="Professional's feedback notes")
+    student_feedback = models.TextField(blank=True, help_text="Student's feedback about the review")
+    rating = models.IntegerField(null=True, blank=True, choices=[(i, i) for i in range(1, 6)], help_text="Student rating (1-5)")
+    
+    # Timestamps
+    submission_date = models.DateTimeField(auto_now_add=True)
+    matched_date = models.DateTimeField(null=True, blank=True)
+    completed_date = models.DateTimeField(null=True, blank=True)
+    
+    # Admin notes
+    admin_notes = models.TextField(blank=True)
+
+    class Meta:
+        db_table = 'review_requests'
+        ordering = ['-submission_date']
+
+    def __str__(self):
+        professional_name = self.professional.name if self.professional else "Unassigned"
+        return f"{self.student.username} - {professional_name} ({self.status})"
+    
+    def save(self, *args, **kwargs):
+        # Update timestamps based on status changes
+        if self.pk:  # Only for updates, not new records
+            old_instance = ReviewRequest.objects.get(pk=self.pk)
+            if old_instance.status != self.status:
+                if self.status == 'matched' and not self.matched_date:
+                    self.matched_date = timezone.now()
+                elif self.status == 'completed' and not self.completed_date:
+                    self.completed_date = timezone.now()
+                    # Update professional's total reviews
+                    if self.professional:
+                        self.professional.total_reviews += 1
+                        self.professional.save()
+        super().save(*args, **kwargs)
+
+class ScheduledSession(models.Model):
+    """Scheduled meetings between students and professionals"""
+    STATUS_CHOICES = [
+        ('scheduled', 'Scheduled'),
+        ('completed', 'Completed'),
+        ('cancelled', 'Cancelled'),
+        ('no_show', 'No Show'),
+    ]
+
+    review_request = models.OneToOneField(ReviewRequest, on_delete=models.CASCADE, related_name='scheduled_session')
+    student = models.ForeignKey(User, on_delete=models.CASCADE, related_name='student_sessions')
+    professional = models.ForeignKey(Professional, on_delete=models.CASCADE, related_name='professional_sessions')
+    
+    # Session details
+    scheduled_time = models.DateTimeField(help_text="Scheduled meeting time")
+    duration_minutes = models.IntegerField(default=30, help_text="Session duration in minutes")
+    meeting_link = models.URLField(blank=True, help_text="Video call link (Zoom, Google Meet, etc.)")
+    calendar_event_id = models.CharField(max_length=255, blank=True, help_text="Google Calendar event ID")
+    
+    # Status and notes
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='scheduled')
+    admin_notes = models.TextField(blank=True, help_text="Admin notes about the session")
+    session_notes = models.TextField(blank=True, help_text="Notes from the actual session")
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'scheduled_sessions'
+        ordering = ['-scheduled_time']
+
+    def __str__(self):
+        return f"{self.student.username} <-> {self.professional.name} at {self.scheduled_time}"
+    
+    def save(self, *args, **kwargs):
+        # Update related review request status
+        if self.pk is None:  # New session
+            self.review_request.status = 'scheduled'
+            self.review_request.scheduled_time = self.scheduled_time
+            self.review_request.save()
+        super().save(*args, **kwargs)
+
+class ProfessionalAvailability(models.Model):
+    """Professional availability responses from Google Forms"""
+    professional = models.ForeignKey(Professional, on_delete=models.CASCADE, related_name='availability_responses')
+    form_response_id = models.CharField(max_length=255, unique=True, help_text="Google Form response ID")
+    
+    # Form data
+    form_data = models.JSONField(default=dict, help_text="Complete form response data")
+    availability_slots = models.JSONField(default=list, help_text="Parsed availability time slots")
+    preferred_days = models.JSONField(default=list, help_text="Preferred days of week")
+    time_zone = models.CharField(max_length=50, default='UTC', help_text="Professional's timezone")
+    
+    # Availability periods
+    start_date = models.DateField(help_text="Start of availability period")
+    end_date = models.DateField(help_text="End of availability period")
+    
+    # Metadata
+    submission_date = models.DateTimeField(auto_now_add=True)
+    is_active = models.BooleanField(default=True)
+    notes = models.TextField(blank=True, help_text="Additional notes from professional")
+
+    class Meta:
+        db_table = 'professional_availability'
+        ordering = ['-submission_date']
+
+    def __str__(self):
+        return f"{self.professional.name} - {self.start_date} to {self.end_date}"

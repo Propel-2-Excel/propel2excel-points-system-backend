@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import User, Activity, PointsLog, Incentive, Redemption, UserStatus, UserIncentiveUnlock, DiscordLinkCode
+from .models import User, Activity, PointsLog, Incentive, Redemption, UserStatus, UserIncentiveUnlock, DiscordLinkCode, Professional, ReviewRequest, ScheduledSession, ProfessionalAvailability
 
 class UserSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, required=False)
@@ -9,9 +9,19 @@ class UserSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'username', 'email', 'first_name', 'last_name',
             'role', 'company', 'university', 'discord_id',
-            'total_points', 'created_at', 'updated_at', 'password'
+            'total_points', 'created_at', 'updated_at', 'password',
+            
+            # Discord verification fields
+            'discord_username_unverified', 'discord_verified', 'discord_verified_at',
+            
+            # Media consent fields
+            'media_consent', 'media_consent_date', 'media_consent_ip',
+            'media_consent_user_agent', 'onboarding_completed', 'onboarding_completed_date'
         ]
-        read_only_fields = ['id', 'total_points', 'created_at', 'updated_at']
+        read_only_fields = [
+            'id', 'total_points', 'created_at', 'updated_at', 'discord_verified', 'discord_verified_at',
+            'media_consent_date', 'media_consent_ip', 'media_consent_user_agent', 'onboarding_completed_date'
+        ]
     
     def create(self, validated_data):
         password = validated_data.pop('password', None)
@@ -92,3 +102,128 @@ class DiscordLinkCodeSerializer(serializers.ModelSerializer):
         model = DiscordLinkCode
         fields = ['code', 'expires_at', 'used_at']
         read_only_fields = fields
+
+class ProfessionalSerializer(serializers.ModelSerializer):
+    review_count = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Professional
+        fields = [
+            'id', 'name', 'email', 'specialties', 'bio', 'availability',
+            'is_active', 'total_reviews', 'rating', 'review_count',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'total_reviews', 'rating', 'created_at', 'updated_at']
+    
+    def get_review_count(self, obj):
+        return obj.assigned_reviews.filter(status='completed').count()
+
+class ReviewRequestSerializer(serializers.ModelSerializer):
+    student_username = serializers.CharField(source='student.username', read_only=True)
+    professional_name = serializers.CharField(source='professional.name', read_only=True)
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    priority_display = serializers.CharField(source='get_priority_display', read_only=True)
+    days_since_submission = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = ReviewRequest
+        fields = [
+            'id', 'student', 'student_username', 'professional', 'professional_name',
+            'status', 'status_display', 'priority', 'priority_display',
+            'form_data', 'target_industry', 'target_role', 'experience_level',
+            'preferred_times', 'scheduled_time', 'session_duration',
+            'review_notes', 'student_feedback', 'rating',
+            'submission_date', 'matched_date', 'completed_date',
+            'admin_notes', 'days_since_submission'
+        ]
+        read_only_fields = [
+            'id', 'submission_date', 'matched_date', 'completed_date',
+            'student_username', 'professional_name', 'status_display', 
+            'priority_display', 'days_since_submission'
+        ]
+    
+    def get_days_since_submission(self, obj):
+        from django.utils import timezone
+        delta = timezone.now() - obj.submission_date
+        return delta.days
+
+class ReviewRequestCreateSerializer(serializers.ModelSerializer):
+    """Simplified serializer for creating review requests via Discord bot"""
+    
+    class Meta:
+        model = ReviewRequest
+        fields = [
+            'student', 'target_industry', 'target_role', 'experience_level',
+            'preferred_times', 'priority', 'form_data', 'admin_notes'
+        ]
+
+class ScheduledSessionSerializer(serializers.ModelSerializer):
+    student_username = serializers.CharField(source='student.username', read_only=True)
+    professional_name = serializers.CharField(source='professional.name', read_only=True)
+    review_request_id = serializers.IntegerField(source='review_request.id', read_only=True)
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    
+    class Meta:
+        model = ScheduledSession
+        fields = [
+            'id', 'review_request', 'review_request_id', 'student', 'student_username',
+            'professional', 'professional_name', 'scheduled_time', 'duration_minutes',
+            'meeting_link', 'calendar_event_id', 'status', 'status_display',
+            'admin_notes', 'session_notes', 'created_at', 'updated_at', 'completed_at'
+        ]
+        read_only_fields = [
+            'id', 'created_at', 'updated_at', 'student_username', 'professional_name',
+            'review_request_id', 'status_display'
+        ]
+
+class ProfessionalAvailabilitySerializer(serializers.ModelSerializer):
+    professional_name = serializers.CharField(source='professional.name', read_only=True)
+    days_valid = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = ProfessionalAvailability
+        fields = [
+            'id', 'professional', 'professional_name', 'form_response_id',
+            'form_data', 'availability_slots', 'preferred_days', 'time_zone',
+            'start_date', 'end_date', 'submission_date', 'is_active',
+            'notes', 'days_valid'
+        ]
+        read_only_fields = [
+            'id', 'submission_date', 'professional_name', 'days_valid'
+        ]
+    
+    def get_days_valid(self, obj):
+        from django.utils import timezone
+        if not obj.is_active:
+            return 0
+        today = timezone.now().date()
+        if today > obj.end_date:
+            return 0
+        return (obj.end_date - max(today, obj.start_date)).days
+
+class DiscordValidationSerializer(serializers.Serializer):
+    """Serializer for Discord username validation requests"""
+    discord_username = serializers.CharField(
+        max_length=50, 
+        help_text="Discord username with discriminator (e.g., JaneDoe#1234)"
+    )
+    
+    def validate_discord_username(self, value):
+        """Validate Discord username format"""
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError("Discord username cannot be empty")
+        
+        # Basic validation - Discord usernames can have various formats
+        # We'll let the bot do the actual server membership validation
+        if len(value) < 2:
+            raise serializers.ValidationError("Discord username too short")
+        
+        return value
+
+class DiscordValidationResponseSerializer(serializers.Serializer):
+    """Serializer for Discord validation responses"""
+    valid = serializers.BooleanField()
+    message = serializers.CharField(max_length=200)
+    discord_username = serializers.CharField(max_length=50)
+    discord_id = serializers.CharField(max_length=50, required=False)
