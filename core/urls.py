@@ -1,5 +1,5 @@
 from django.urls import path, include
-from .views import BotIntegrationView, LinkView, FormSubmissionView, ProfessionalAvailabilityFormView
+from .views import BotIntegrationView, LinkView, FormSubmissionView, ProfessionalAvailabilityFormView, DiscordValidationView
 from rest_framework.routers import DefaultRouter
 from .views import (
     UserViewSet, ActivityViewSet, PointsLogViewSet,
@@ -22,6 +22,7 @@ router.register(r'professional-availability', ProfessionalAvailabilityViewSet, b
 urlpatterns = [
     path('api/', include(router.urls)),
     path('api/bot/', BotIntegrationView.as_view(), name='bot-integration'),
+    path('api/validate-discord-user/', DiscordValidationView.as_view(), name='discord-validation'),
     path('api/link/start', LinkView.as_view(), name='link-start'),
     path('api/link/status', LinkView.as_view(), name='link-status'),
     path('api/form-submission/', FormSubmissionView.as_view(), name='form-submission'),

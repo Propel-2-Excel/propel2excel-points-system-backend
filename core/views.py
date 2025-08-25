@@ -6,12 +6,18 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import authenticate
 from django.db import transaction, models
 from django.utils import timezone
+import asyncio
+import aiohttp
+import logging
+
+logger = logging.getLogger(__name__)
 from .models import User, Activity, PointsLog, Incentive, Redemption, UserStatus, UserIncentiveUnlock, DiscordLinkCode, Professional, ReviewRequest, ScheduledSession, ProfessionalAvailability
 from .serializers import (
     UserSerializer, ActivitySerializer, PointsLogSerializer,
     IncentiveSerializer, RedemptionSerializer, UserStatusSerializer, DiscordLinkCodeSerializer,
     ProfessionalSerializer, ReviewRequestSerializer, ReviewRequestCreateSerializer,
-    ScheduledSessionSerializer, ProfessionalAvailabilitySerializer
+    ScheduledSessionSerializer, ProfessionalAvailabilitySerializer,
+    DiscordValidationSerializer, DiscordValidationResponseSerializer
 )
 
 class UserViewSet(viewsets.ModelViewSet):
@@ -21,11 +27,18 @@ class UserViewSet(viewsets.ModelViewSet):
     
     @action(detail=False, methods=['post'], permission_classes=[permissions.AllowAny])
     def register(self, request):
-        """Register a new user"""
+        """Register a new user with Discord verification required"""
         serializer = self.get_serializer(data=request.data)
         if serializer.is_valid():
             user = serializer.save()
             user.set_password(request.data.get('password'))
+            
+            # Store UNVERIFIED Discord information (security: don't auto-link!)
+            discord_data = request.data.get('discord_data', {})
+            if discord_data.get('discord_username'):
+                user.discord_username_unverified = discord_data.get('discord_username')
+                logger.info(f"New user {user.username} registered with unverified Discord: {user.discord_username_unverified}")
+            
             user.save()
             
             # Create user status
@@ -33,13 +46,25 @@ class UserViewSet(viewsets.ModelViewSet):
             
             # Generate tokens
             refresh = RefreshToken.for_user(user)
-            return Response({
+            
+            response_data = {
                 'user': serializer.data,
                 'tokens': {
                     'refresh': str(refresh),
                     'access': str(refresh.access_token),
                 }
-            }, status=status.HTTP_201_CREATED)
+            }
+            
+            # Include Discord verification status
+            if user.discord_username_unverified:
+                response_data['discord_verification_required'] = True
+                response_data['discord_username_pending'] = user.discord_username_unverified
+                response_data['message'] = f'Account created! Please verify your Discord account "{user.discord_username_unverified}" using the bot to enable Discord features.'
+            else:
+                response_data['discord_verification_required'] = False
+                response_data['message'] = 'Account created! You can link Discord later in your profile.'
+            
+            return Response(response_data, status=status.HTTP_201_CREATED)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
     @action(detail=False, methods=['post'], permission_classes=[permissions.AllowAny])
@@ -582,6 +607,8 @@ class BotIntegrationView(APIView):
             return self._schedule_session(request)
         if action == "add-professional-availability":
             return self._add_professional_availability(request)
+        if action == "validate-discord-user":
+            return self._validate_discord_user(request)
 
         return Response({"error": "Unknown action"}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -680,6 +707,8 @@ class BotIntegrationView(APIView):
     def _link_discord(self, request):
         code = request.data.get("code")
         discord_id = request.data.get("discord_id")
+        discord_username = request.data.get("discord_username")  # Bot will provide this
+        
         if not code or not discord_id:
             return Response({"error": "code and discord_id are required"}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -696,12 +725,52 @@ class BotIntegrationView(APIView):
                 return Response({"error": "Code expired"}, status=status.HTTP_400_BAD_REQUEST)
 
             user = link.user
+            
+            # SECURITY CHECK 1: Prevent relinking already verified accounts
+            if user.discord_verified and user.discord_id:
+                return Response({
+                    "error": "Discord account already verified and linked. Cannot relink for security reasons."
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # SECURITY CHECK 2: If user has unverified username, verify it matches
+            if user.discord_username_unverified and discord_username:
+                # Extract username from full discord_username (remove discriminator for comparison)
+                provided_username = user.discord_username_unverified.split('#')[0].lower()
+                actual_username = discord_username.split('#')[0].lower()
+                
+                if provided_username != actual_username:
+                    return Response({
+                        "error": f"Discord username mismatch. You registered with '{user.discord_username_unverified}' but are linking as '{discord_username}'. Please use the correct Discord account."
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # SECURITY CHECK 3: Prevent linking to already-linked Discord accounts
+            existing_user = User.objects.filter(discord_id=str(discord_id), discord_verified=True).exclude(id=user.id).first()
+            if existing_user:
+                return Response({
+                    "error": f"This Discord account is already linked to another user account. Each Discord account can only be linked once."
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+            # All security checks passed - complete the linking
             user.discord_id = str(discord_id)
-            user.save(update_fields=["discord_id"])
+            user.discord_verified = True
+            user.discord_verified_at = timezone.now()
+            
+            # Clear unverified username now that it's verified
+            if user.discord_username_unverified:
+                user.discord_username_unverified = None
+                
+            user.save(update_fields=["discord_id", "discord_verified", "discord_verified_at", "discord_username_unverified"])
+            
             link.used_at = timezone.now()
             link.save(update_fields=["used_at"])
 
-        return Response({"linked": True, "discord_id": str(discord_id)})
+        logger.info(f"Successfully verified and linked Discord account {discord_username} to user {user.username}")
+        return Response({
+            "linked": True, 
+            "discord_id": str(discord_id),
+            "verified": True,
+            "message": "Discord account successfully verified and linked!"
+        })
 
     def _summary(self, request):
         discord_id = request.data.get("discord_id")
@@ -1291,6 +1360,22 @@ class BotIntegrationView(APIView):
         
         return overlaps
 
+    def _validate_discord_user(self, request):
+        """Validate Discord username against server membership (called by bot)"""
+        discord_username = request.data.get("discord_username")
+        
+        if not discord_username:
+            return Response({"error": "discord_username is required"}, status=400)
+        
+        # This method is called by the bot when validating Discord usernames
+        # The bot will have already checked the server membership
+        # For now, return a placeholder response that the bot can implement
+        return Response({
+            "valid": False,
+            "message": "Bot must implement Discord server member validation",
+            "discord_username": discord_username
+        })
+
 
 class LinkView(APIView):
     permission_classes = [permissions.IsAuthenticated]
@@ -1574,3 +1659,116 @@ class ProfessionalAvailabilityFormView(APIView):
             logger.error(f"Professional availability form submission error: {e}")
             
             return Response({"error": "Internal server error"}, status=500)
+
+
+class DiscordValidationView(APIView):
+    """
+    Validate Discord username against server membership
+    This endpoint is called by the frontend during user registration
+    """
+    permission_classes = [permissions.AllowAny]
+    
+    def post(self, request):
+        """Validate Discord username"""
+        serializer = DiscordValidationSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        discord_username = serializer.validated_data['discord_username']
+        
+        # Call the bot to validate server membership
+        validation_result = self._validate_with_bot(discord_username)
+        
+        if validation_result['success']:
+            response_data = {
+                'valid': validation_result['valid'],
+                'message': validation_result['message'],
+                'discord_username': discord_username,
+                'discord_id': validation_result.get('discord_id')
+            }
+            return Response(response_data, status=status.HTTP_200_OK)
+        else:
+            return Response({
+                'valid': False,
+                'message': validation_result['message'],
+                'discord_username': discord_username
+            }, status=status.HTTP_200_OK)
+    
+    def _validate_with_bot(self, discord_username):
+        """Call bot to validate Discord username against server membership"""
+        import aiohttp
+        import asyncio
+        from django.conf import settings
+        
+        try:
+            # Run the async bot validation call
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            result = loop.run_until_complete(self._async_validate_with_bot(discord_username))
+            loop.close()
+            return result
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error validating Discord username with bot: {e}")
+            return {
+                'success': False,
+                'message': 'Unable to validate Discord username at this time. Please try again later.'
+            }
+    
+    async def _async_validate_with_bot(self, discord_username):
+        """Async call to bot HTTP server for Discord validation"""
+        from django.conf import settings
+        
+        # Bot HTTP server URL (different from backend URL)
+        bot_http_port = getattr(settings, 'BOT_HTTP_PORT', 8001)
+        bot_http_url = f"http://localhost:{bot_http_port}"
+        bot_secret = getattr(settings, 'BOT_SHARED_SECRET', '')
+        
+        if not bot_secret:
+            return {
+                'success': False,
+                'message': 'Bot integration not configured'
+            }
+        
+        async with aiohttp.ClientSession() as session:
+            payload = {
+                "discord_username": discord_username
+            }
+            
+            try:
+                async with session.post(
+                    f"{bot_http_url}/validate-discord",
+                    json=payload,
+                    headers={
+                        "Content-Type": "application/json",
+                        "X-Bot-Secret": bot_secret,
+                    },
+                    timeout=aiohttp.ClientTimeout(total=10)
+                ) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        return {
+                            'success': True,
+                            'valid': data.get('valid', False),
+                            'message': data.get('message', ''),
+                            'discord_id': data.get('discord_id'),
+                            'display_name': data.get('display_name'),
+                            'username': data.get('username')
+                        }
+                    else:
+                        error_text = await response.text()
+                        return {
+                            'success': False,
+                            'message': f'Bot validation failed: {error_text}'
+                        }
+            except asyncio.TimeoutError:
+                return {
+                    'success': False,
+                    'message': 'Discord validation timed out. Please try again.'
+                }
+            except Exception as e:
+                return {
+                    'success': False,
+                    'message': f'Discord validation error: {str(e)}'
+                }

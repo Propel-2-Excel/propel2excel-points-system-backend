@@ -11,13 +11,16 @@ class UserSerializer(serializers.ModelSerializer):
             'role', 'company', 'university', 'discord_id',
             'total_points', 'created_at', 'updated_at', 'password',
             
-            # New consent fields
+            # Discord verification fields
+            'discord_username_unverified', 'discord_verified', 'discord_verified_at',
+            
+            # Media consent fields
             'media_consent', 'media_consent_date', 'media_consent_ip',
             'media_consent_user_agent', 'onboarding_completed', 'onboarding_completed_date'
         ]
         read_only_fields = [
-            'id', 'total_points', 'created_at', 'updated_at', 'media_consent_date',
-            'media_consent_ip', 'media_consent_user_agent', 'onboarding_completed_date'
+            'id', 'total_points', 'created_at', 'updated_at', 'discord_verified', 'discord_verified_at',
+            'media_consent_date', 'media_consent_ip', 'media_consent_user_agent', 'onboarding_completed_date'
         ]
     
     def create(self, validated_data):
@@ -197,3 +200,30 @@ class ProfessionalAvailabilitySerializer(serializers.ModelSerializer):
         if today > obj.end_date:
             return 0
         return (obj.end_date - max(today, obj.start_date)).days
+
+class DiscordValidationSerializer(serializers.Serializer):
+    """Serializer for Discord username validation requests"""
+    discord_username = serializers.CharField(
+        max_length=50, 
+        help_text="Discord username with discriminator (e.g., JaneDoe#1234)"
+    )
+    
+    def validate_discord_username(self, value):
+        """Validate Discord username format"""
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError("Discord username cannot be empty")
+        
+        # Basic validation - Discord usernames can have various formats
+        # We'll let the bot do the actual server membership validation
+        if len(value) < 2:
+            raise serializers.ValidationError("Discord username too short")
+        
+        return value
+
+class DiscordValidationResponseSerializer(serializers.Serializer):
+    """Serializer for Discord validation responses"""
+    valid = serializers.BooleanField()
+    message = serializers.CharField(max_length=200)
+    discord_username = serializers.CharField(max_length=50)
+    discord_id = serializers.CharField(max_length=50, required=False)

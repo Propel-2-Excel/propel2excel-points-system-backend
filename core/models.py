@@ -15,6 +15,24 @@ class User(AbstractUser):
     company = models.CharField(max_length=100, blank=True, null=True)
     university = models.CharField(max_length=100, blank=True, null=True)
     discord_id = models.CharField(max_length=50, blank=True, null=True)
+    
+    # Discord verification fields
+    discord_username_unverified = models.CharField(
+        max_length=50, 
+        blank=True, 
+        null=True,
+        help_text="Discord username provided during registration (unverified)"
+    )
+    discord_verified = models.BooleanField(
+        default=False,
+        help_text="Whether the Discord account has been verified via bot"
+    )
+    discord_verified_at = models.DateTimeField(
+        blank=True, 
+        null=True,
+        help_text="When Discord verification was completed"
+    )
+    
     total_points = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
