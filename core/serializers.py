@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import User, Activity, PointsLog, Incentive, Redemption, UserStatus, UserIncentiveUnlock, DiscordLinkCode, Professional, ReviewRequest, ScheduledSession, ProfessionalAvailability
+from .models import User, Activity, PointsLog, Incentive, Redemption, UserStatus, UserIncentiveUnlock, DiscordLinkCode, Professional, ReviewRequest, ScheduledSession, ProfessionalAvailability, UserPreferences
 
 class UserSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, required=False)
@@ -32,18 +32,21 @@ class UserSerializer(serializers.ModelSerializer):
         return user
 
 class ActivitySerializer(serializers.ModelSerializer):
+    category_display = serializers.CharField(source='get_category_display', read_only=True)
+    
     class Meta:
         model = Activity
         fields = '__all__'
 
 class PointsLogSerializer(serializers.ModelSerializer):
     activity_name = serializers.CharField(source='activity.name', read_only=True)
+    activity_category = serializers.CharField(source='activity.category', read_only=True)
     user_username = serializers.CharField(source='user.username', read_only=True)
     
     class Meta:
         model = PointsLog
         fields = [
-            'id', 'user', 'user_username', 'activity', 'activity_name',
+            'id', 'user', 'user_username', 'activity', 'activity_name', 'activity_category',
             'points_earned', 'details', 'timestamp'
         ]
         read_only_fields = ['id', 'timestamp']
@@ -51,10 +54,13 @@ class PointsLogSerializer(serializers.ModelSerializer):
 class IncentiveSerializer(serializers.ModelSerializer):
     is_unlocked = serializers.SerializerMethodField()
     unlocked_at = serializers.SerializerMethodField()
+    can_redeem = serializers.SerializerMethodField()
+    category_display = serializers.CharField(source='get_category_display', read_only=True)
+    
     class Meta:
         model = Incentive
         fields = '__all__'
-        read_only_fields = ['is_unlocked', 'unlocked_at']
+        read_only_fields = ['is_unlocked', 'unlocked_at', 'can_redeem']
 
     def get_is_unlocked(self, obj):
         request = self.context.get('request')
@@ -72,18 +78,28 @@ class IncentiveSerializer(serializers.ModelSerializer):
             return None
         uiu = UserIncentiveUnlock.objects.filter(user=request.user, incentive=obj).first()
         return uiu.unlocked_at if uiu else None
+    
+    def get_can_redeem(self, obj):
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return False
+        return (getattr(request.user, 'total_points', 0) >= obj.points_required and 
+                obj.is_active and obj.stock_available > 0)
 
 class RedemptionSerializer(serializers.ModelSerializer):
     incentive_name = serializers.CharField(source='incentive.name', read_only=True)
+    incentive_image_url = serializers.URLField(source='incentive.image_url', read_only=True)
     user_username = serializers.CharField(source='user.username', read_only=True)
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
     
     class Meta:
         model = Redemption
         fields = [
-            'id', 'user', 'user_username', 'incentive', 'incentive_name',
-            'points_spent', 'status', 'admin_notes', 'redeemed_at', 'processed_at'
+            'id', 'user', 'user_username', 'incentive', 'incentive_name', 'incentive_image_url',
+            'points_spent', 'status', 'status_display', 'delivery_details', 'tracking_info',
+            'estimated_delivery', 'admin_notes', 'redeemed_at', 'processed_at'
         ]
-        read_only_fields = ['id', 'redeemed_at', 'processed_at']
+        read_only_fields = ['id', 'redeemed_at', 'processed_at', 'status_display']
 
 class UserStatusSerializer(serializers.ModelSerializer):
     user_username = serializers.CharField(source='user.username', read_only=True)
@@ -227,3 +243,14 @@ class DiscordValidationResponseSerializer(serializers.Serializer):
     message = serializers.CharField(max_length=200)
     discord_username = serializers.CharField(max_length=50)
     discord_id = serializers.CharField(max_length=50, required=False)
+
+class UserPreferencesSerializer(serializers.ModelSerializer):
+    """Serializer for user preferences"""
+    
+    class Meta:
+        model = UserPreferences
+        fields = [
+            'id', 'user', 'email_notifications', 'privacy_settings',
+            'display_preferences', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'user', 'created_at', 'updated_at']

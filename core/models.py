@@ -89,8 +89,18 @@ class Activity(models.Model):
         ('discord_activity', 'Discord Activity'),
     ]
     
+    CATEGORY_CHOICES = [
+        ('engagement', 'Community Engagement'),
+        ('professional', 'Professional Development'),
+        ('social', 'Social Media'),
+        ('events', 'Events & Networking'),
+        ('content', 'Content Creation'),
+        ('other', 'Other'),
+    ]
+    
     name = models.CharField(max_length=100)
     activity_type = models.CharField(max_length=25, choices=ACTIVITY_TYPES)
+    category = models.CharField(max_length=20, choices=CATEGORY_CHOICES, default='other')
     points_value = models.IntegerField()
     description = models.TextField(blank=True)
     is_active = models.BooleanField(default=True)
@@ -109,7 +119,7 @@ class PointsLog(models.Model):
     activity = models.ForeignKey(Activity, on_delete=models.CASCADE)
     points_earned = models.IntegerField()
     details = models.TextField(blank=True)
-    timestamp = models.DateTimeField(auto_now_add=True)
+    timestamp = models.DateTimeField(default=timezone.now)
     
     class Meta:
         db_table = 'points_log'
@@ -126,10 +136,22 @@ class Incentive(models.Model):
         ('redeemed', 'Redeemed'),
     ]
     
+    CATEGORY_CHOICES = [
+        ('merchandise', 'Merchandise'),
+        ('gift_cards', 'Gift Cards'),
+        ('experiences', 'Experiences'),
+        ('services', 'Services'),
+        ('digital', 'Digital Rewards'),
+        ('other', 'Other'),
+    ]
+    
     name = models.CharField(max_length=100)
     description = models.TextField()
     points_required = models.IntegerField()
     sponsor = models.CharField(max_length=100, blank=True)
+    category = models.CharField(max_length=20, choices=CATEGORY_CHOICES, default='other')
+    image_url = models.URLField(blank=True, null=True, help_text="URL to reward image")
+    stock_available = models.IntegerField(default=0, help_text="Number of items available")
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='available')
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -142,14 +164,21 @@ class Incentive(models.Model):
 
 class Redemption(models.Model):
     """Log of incentive redemptions"""
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('approved', 'Approved'),
+        ('shipped', 'Shipped'),
+        ('delivered', 'Delivered'),
+        ('rejected', 'Rejected'),
+    ]
+    
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='redemptions')
     incentive = models.ForeignKey(Incentive, on_delete=models.CASCADE)
     points_spent = models.IntegerField()
-    status = models.CharField(max_length=20, choices=[
-        ('pending', 'Pending'),
-        ('approved', 'Approved'),
-        ('rejected', 'Rejected'),
-    ], default='pending')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    delivery_details = models.JSONField(default=dict, help_text="Delivery address and contact info")
+    tracking_info = models.CharField(max_length=255, blank=True, null=True)
+    estimated_delivery = models.DateField(blank=True, null=True)
     admin_notes = models.TextField(blank=True)
     redeemed_at = models.DateTimeField(auto_now_add=True)
     processed_at = models.DateTimeField(blank=True, null=True)
@@ -371,3 +400,26 @@ class ProfessionalAvailability(models.Model):
 
     def __str__(self):
         return f"{self.professional.name} - {self.start_date} to {self.end_date}"
+
+class UserPreferences(models.Model):
+    """User preferences for notifications and display settings"""
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='preferences')
+    
+    # Email notifications
+    email_notifications = models.JSONField(default=dict, help_text="Email notification preferences")
+    
+    # Privacy settings
+    privacy_settings = models.JSONField(default=dict, help_text="Privacy and display preferences")
+    
+    # Display preferences
+    display_preferences = models.JSONField(default=dict, help_text="UI display preferences")
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'user_preferences'
+    
+    def __str__(self):
+        return f"Preferences for {self.user.username}"
