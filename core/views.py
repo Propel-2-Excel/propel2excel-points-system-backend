@@ -11,13 +11,13 @@ import aiohttp
 import logging
 
 logger = logging.getLogger(__name__)
-from .models import User, Activity, PointsLog, Incentive, Redemption, UserStatus, UserIncentiveUnlock, DiscordLinkCode, Professional, ReviewRequest, ScheduledSession, ProfessionalAvailability
+from .models import User, Activity, PointsLog, Incentive, Redemption, UserStatus, UserIncentiveUnlock, DiscordLinkCode, Professional, ReviewRequest, ScheduledSession, ProfessionalAvailability, UserPreferences
 from .serializers import (
     UserSerializer, ActivitySerializer, PointsLogSerializer,
     IncentiveSerializer, RedemptionSerializer, UserStatusSerializer, DiscordLinkCodeSerializer,
     ProfessionalSerializer, ReviewRequestSerializer, ReviewRequestCreateSerializer,
     ScheduledSessionSerializer, ProfessionalAvailabilitySerializer,
-    DiscordValidationSerializer, DiscordValidationResponseSerializer
+    DiscordValidationSerializer, DiscordValidationResponseSerializer, UserPreferencesSerializer
 )
 
 class UserViewSet(viewsets.ModelViewSet):
@@ -65,6 +65,8 @@ class UserViewSet(viewsets.ModelViewSet):
                 response_data['message'] = 'Account created! You can link Discord later in your profile.'
             
             return Response(response_data, status=status.HTTP_201_CREATED)
+        
+        # Return detailed error messages for better UX
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
     @action(detail=False, methods=['post'], permission_classes=[permissions.AllowAny])
@@ -538,6 +540,493 @@ class ProfessionalAvailabilityViewSet(viewsets.ModelViewSet):
         
         serializer = ProfessionalAvailabilitySerializer(active_availability, many=True)
         return Response(serializer.data)
+
+
+# New API endpoints for frontend requirements
+
+class DashboardStatsView(APIView):
+    """Dashboard statistics with trends endpoint"""
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request):
+        """Get dashboard statistics with period-over-period comparison"""
+        from datetime import datetime, timedelta
+        from django.db.models import Count, Sum
+        
+        period = request.GET.get('period', '30days')
+        
+        # Calculate date ranges
+        now = timezone.now()
+        if period == '7days':
+            current_start = now - timedelta(days=7)
+            previous_start = now - timedelta(days=14)
+            previous_end = current_start
+        elif period == '90days':
+            current_start = now - timedelta(days=90)
+            previous_start = now - timedelta(days=180)
+            previous_end = current_start
+        else:  # 30days default
+            current_start = now - timedelta(days=30)
+            previous_start = now - timedelta(days=60)
+            previous_end = current_start
+        
+        user = request.user
+        
+        # Current period stats
+        current_logs = PointsLog.objects.filter(
+            user=user,
+            timestamp__gte=current_start
+        )
+        current_points_earned = current_logs.aggregate(Sum('points_earned'))['points_earned__sum'] or 0
+        current_activities = current_logs.count()
+        
+        # Previous period stats
+        previous_logs = PointsLog.objects.filter(
+            user=user,
+            timestamp__gte=previous_start,
+            timestamp__lt=previous_end
+        )
+        previous_points_earned = previous_logs.aggregate(Sum('points_earned'))['points_earned__sum'] or 0
+        previous_activities = previous_logs.count()
+        
+        # Calculate trends
+        def calculate_trend(current, previous):
+            if previous == 0:
+                return {
+                    'change': current,
+                    'percentage': 100.0 if current > 0 else 0.0,
+                    'direction': 'up' if current > 0 else 'neutral'
+                }
+            
+            change = current - previous
+            percentage = (change / previous) * 100
+            direction = 'up' if change > 0 else 'down' if change < 0 else 'neutral'
+            
+            return {
+                'change': change,
+                'percentage': round(percentage, 2),
+                'direction': direction
+            }
+        
+        # Available rewards count
+        available_rewards = Incentive.objects.filter(
+            is_active=True,
+            points_required__lte=user.total_points
+        ).count()
+        
+        return Response({
+            'current_period': {
+                'total_points': user.total_points,
+                'activities_completed': current_activities,
+                'points_earned': current_points_earned,
+                'start_date': current_start.date().isoformat(),
+                'end_date': now.date().isoformat()
+            },
+            'previous_period': {
+                'total_points': user.total_points - current_points_earned,
+                'activities_completed': previous_activities,
+                'points_earned': previous_points_earned,
+                'start_date': previous_start.date().isoformat(),
+                'end_date': previous_end.date().isoformat()
+            },
+            'trends': {
+                'total_points': calculate_trend(user.total_points, user.total_points - current_points_earned),
+                'activities_completed': calculate_trend(current_activities, previous_activities),
+                'points_earned': calculate_trend(current_points_earned, previous_points_earned)
+            }
+        })
+
+
+class PointsTimelineView(APIView):
+    """Points timeline chart endpoint"""
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request):
+        """Get historical points data grouped by time periods"""
+        from datetime import datetime, timedelta, date
+        from django.db.models import Sum
+        
+        granularity = request.GET.get('granularity', 'daily')
+        days = int(request.GET.get('days', 30))
+        
+        user = request.user
+        start_date = timezone.now() - timedelta(days=days)
+        
+        # Get all points logs in the period
+        logs = PointsLog.objects.filter(
+            user=user,
+            timestamp__gte=start_date
+        ).order_by('timestamp')
+        
+        # Group by granularity
+        timeline = []
+        if granularity == 'weekly':
+            # Group by weeks
+            current_date = start_date.date()
+            end_date = timezone.now().date()
+            cumulative_points = user.total_points - logs.aggregate(Sum('points_earned'))['points_earned__sum'] or 0
+            
+            while current_date <= end_date:
+                week_end = current_date + timedelta(days=6)
+                week_logs = logs.filter(
+                    timestamp__date__gte=current_date,
+                    timestamp__date__lte=week_end
+                )
+                points_earned = week_logs.aggregate(Sum('points_earned'))['points_earned__sum'] or 0
+                cumulative_points += points_earned
+                
+                timeline.append({
+                    'date': current_date.isoformat(),
+                    'points_earned': points_earned,
+                    'cumulative_points': cumulative_points,
+                    'activities_count': week_logs.count()
+                })
+                
+                current_date += timedelta(days=7)
+                
+        elif granularity == 'monthly':
+            # Group by months - simplified to 30-day chunks
+            current_date = start_date.date()
+            end_date = timezone.now().date()
+            cumulative_points = user.total_points - logs.aggregate(Sum('points_earned'))['points_earned__sum'] or 0
+            
+            while current_date <= end_date:
+                month_end = current_date + timedelta(days=29)
+                month_logs = logs.filter(
+                    timestamp__date__gte=current_date,
+                    timestamp__date__lte=month_end
+                )
+                points_earned = month_logs.aggregate(Sum('points_earned'))['points_earned__sum'] or 0
+                cumulative_points += points_earned
+                
+                timeline.append({
+                    'date': current_date.isoformat(),
+                    'points_earned': points_earned,
+                    'cumulative_points': cumulative_points,
+                    'activities_count': month_logs.count()
+                })
+                
+                current_date += timedelta(days=30)
+                
+        else:  # daily
+            current_date = start_date.date()
+            end_date = timezone.now().date()
+            cumulative_points = user.total_points - logs.aggregate(Sum('points_earned'))['points_earned__sum'] or 0
+            
+            while current_date <= end_date:
+                day_logs = logs.filter(timestamp__date=current_date)
+                points_earned = day_logs.aggregate(Sum('points_earned'))['points_earned__sum'] or 0
+                cumulative_points += points_earned
+                
+                timeline.append({
+                    'date': current_date.isoformat(),
+                    'points_earned': points_earned,
+                    'cumulative_points': cumulative_points,
+                    'activities_count': day_logs.count()
+                })
+                
+                current_date += timedelta(days=1)
+        
+        # Calculate summary stats
+        total_points_earned = logs.aggregate(Sum('points_earned'))['points_earned__sum'] or 0
+        average_daily_points = total_points_earned / days if days > 0 else 0
+        
+        # Find most active date
+        most_active_date = None
+        if timeline:
+            most_active = max(timeline, key=lambda x: x['points_earned'])
+            if most_active['points_earned'] > 0:
+                most_active_date = most_active['date']
+        
+        return Response({
+            'timeline': timeline,
+            'summary': {
+                'total_days': days,
+                'total_points_earned': total_points_earned,
+                'average_daily_points': round(average_daily_points, 1),
+                'most_active_date': most_active_date
+            }
+        })
+
+
+class LeaderboardView(APIView):
+    """Leaderboard system endpoint"""
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request):
+        """Get ranked list of users by points"""
+        from datetime import datetime, timedelta
+        from django.db.models import Sum, Q
+        
+        limit = int(request.GET.get('limit', 10))
+        period = request.GET.get('period', 'all_time')
+        
+        # Base queryset - exclude users without points and ensure they have proper usernames
+        base_queryset = User.objects.exclude(total_points=0).exclude(username__startswith='discord_')
+        
+        if period == 'weekly':
+            # Points earned in last 7 days
+            week_ago = timezone.now() - timedelta(days=7)
+            users_with_weekly_points = base_queryset.annotate(
+                period_points=Sum('points_logs__points_earned', 
+                                filter=Q(points_logs__timestamp__gte=week_ago))
+            ).exclude(period_points__isnull=True).order_by('-period_points', '-total_points')
+        elif period == 'monthly':
+            # Points earned in last 30 days
+            month_ago = timezone.now() - timedelta(days=30)
+            users_with_monthly_points = base_queryset.annotate(
+                period_points=Sum('points_logs__points_earned', 
+                                filter=Q(points_logs__timestamp__gte=month_ago))
+            ).exclude(period_points__isnull=True).order_by('-period_points', '-total_points')
+        else:
+            # All time points
+            users_with_monthly_points = base_queryset.annotate(
+                period_points=models.F('total_points')
+            ).order_by('-total_points')
+        
+        # Get top users
+        top_users = users_with_monthly_points[:limit]
+        
+        # Build leaderboard
+        leaderboard = []
+        for rank, user in enumerate(top_users, 1):
+            # Create privacy-safe display name
+            if hasattr(user, 'preferences') and user.preferences.privacy_settings.get('display_name_preference') == 'first_name_only':
+                display_name = user.first_name or user.username
+            elif hasattr(user, 'preferences') and user.preferences.privacy_settings.get('display_name_preference') == 'username':
+                display_name = user.username
+            else:
+                display_name = f"{user.first_name} {user.last_name[0]}." if user.first_name and user.last_name else user.username
+            
+            leaderboard.append({
+                'rank': rank,
+                'user_id': user.id,
+                'username': user.username,
+                'display_name': display_name,
+                'total_points': user.total_points,
+                'points_this_period': getattr(user, 'period_points', user.total_points) or 0,
+                'avatar_url': None,  # Could be added later
+                'is_current_user': user.id == request.user.id
+            })
+        
+        # Find current user's rank if not in top users
+        current_user_rank = None
+        if not any(item['is_current_user'] for item in leaderboard):
+            current_user_position = users_with_monthly_points.filter(
+                models.Q(total_points__gt=request.user.total_points) |
+                (models.Q(total_points=request.user.total_points) & models.Q(id__lt=request.user.id))
+            ).count() + 1
+            
+            current_user_rank = {
+                'rank': current_user_position,
+                'user_id': request.user.id,
+                'username': request.user.username,
+                'display_name': 'You',
+                'total_points': request.user.total_points,
+                'points_this_period': getattr(request.user, 'period_points', request.user.total_points) or 0,
+                'is_current_user': True
+            }
+        
+        total_participants = users_with_monthly_points.count()
+        
+        return Response({
+            'leaderboard': leaderboard,
+            'current_user_rank': current_user_rank,
+            'total_participants': total_participants
+        })
+
+
+class RewardsAvailableView(APIView):
+    """Enhanced rewards system - available rewards"""
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request):
+        """Get available rewards with redemption info"""
+        user = request.user
+        rewards = Incentive.objects.filter(is_active=True).order_by('points_required')
+        
+        rewards_data = []
+        for reward in rewards:
+            can_redeem = (user.total_points >= reward.points_required and 
+                         reward.stock_available > 0)
+            
+            rewards_data.append({
+                'id': reward.id,
+                'name': reward.name,
+                'description': reward.description,
+                'points_required': reward.points_required,
+                'image_url': reward.image_url,
+                'category': reward.category,
+                'stock_available': reward.stock_available,
+                'can_redeem': can_redeem,
+                'sponsor': reward.sponsor
+            })
+        
+        return Response({
+            'rewards': rewards_data
+        })
+
+
+class RedeemRewardView(APIView):
+    """Redeem reward endpoint"""
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def post(self, request):
+        """Redeem a reward"""
+        reward_id = request.data.get('reward_id')
+        delivery_details = request.data.get('delivery_details', {})
+        
+        if not reward_id:
+            return Response({
+                'success': False,
+                'error': {
+                    'code': 'MISSING_REWARD_ID',
+                    'message': 'Reward ID is required'
+                }
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            reward = Incentive.objects.get(id=reward_id, is_active=True)
+        except Incentive.DoesNotExist:
+            return Response({
+                'success': False,
+                'error': {
+                    'code': 'REWARD_NOT_FOUND',
+                    'message': 'Reward not found or not available'
+                }
+            }, status=status.HTTP_404_NOT_FOUND)
+        
+        user = request.user
+        
+        # Check if user has enough points
+        if user.total_points < reward.points_required:
+            return Response({
+                'success': False,
+                'error': {
+                    'code': 'INSUFFICIENT_POINTS',
+                    'message': 'Not enough points to redeem this reward',
+                    'details': {
+                        'required': reward.points_required,
+                        'available': user.total_points
+                    }
+                }
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Check stock availability
+        if reward.stock_available <= 0:
+            return Response({
+                'success': False,
+                'error': {
+                    'code': 'OUT_OF_STOCK',
+                    'message': 'This reward is currently out of stock'
+                }
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        with transaction.atomic():
+            # Create redemption
+            redemption = Redemption.objects.create(
+                user=user,
+                incentive=reward,
+                points_spent=reward.points_required,
+                delivery_details=delivery_details,
+                status='pending'
+            )
+            
+            # Deduct points from user
+            user.total_points -= reward.points_required
+            user.save()
+            
+            # Reduce stock
+            reward.stock_available -= 1
+            reward.save()
+        
+        return Response({
+            'success': True,
+            'data': {
+                'redemption_id': redemption.id,
+                'reward_name': reward.name,
+                'points_spent': reward.points_required,
+                'remaining_points': user.total_points,
+                'status': redemption.status
+            },
+            'message': f'Successfully redeemed {reward.name}',
+            'timestamp': timezone.now().isoformat()
+        })
+
+
+class RedemptionHistoryView(APIView):
+    """User redemption history endpoint"""
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request):
+        """Get user's redemption history"""
+        user = request.user
+        redemptions = Redemption.objects.filter(user=user).select_related('incentive').order_by('-redeemed_at')
+        
+        redemption_data = []
+        for redemption in redemptions:
+            redemption_data.append({
+                'id': redemption.id,
+                'reward': {
+                    'name': redemption.incentive.name,
+                    'image_url': redemption.incentive.image_url
+                },
+                'points_spent': redemption.points_spent,
+                'redeemed_at': redemption.redeemed_at.isoformat(),
+                'status': redemption.status,
+                'tracking_info': redemption.tracking_info,
+                'estimated_delivery': redemption.estimated_delivery.isoformat() if redemption.estimated_delivery else None
+            })
+        
+        return Response({
+            'redemptions': redemption_data
+        })
+
+
+class UserPreferencesViewSet(viewsets.ModelViewSet):
+    """User preferences management"""
+    serializer_class = UserPreferencesSerializer
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get_queryset(self):
+        return UserPreferences.objects.filter(user=self.request.user)
+    
+    def perform_create(self, serializer):
+        # Ensure user can only create their own preferences
+        serializer.save(user=self.request.user)
+    
+    def get_object(self):
+        # Get or create user preferences
+        preferences, created = UserPreferences.objects.get_or_create(
+            user=self.request.user,
+            defaults={
+                'email_notifications': {
+                    'new_activities': True,
+                    'reward_updates': True,
+                    'leaderboard_changes': False
+                },
+                'privacy_settings': {
+                    'show_in_leaderboard': True,
+                    'display_name_preference': 'first_name_only'
+                },
+                'display_preferences': {}
+            }
+        )
+        return preferences
+    
+    @action(detail=False, methods=['get'])
+    def activity_preferences(self, request):
+        """Get activity preferences including Discord integration"""
+        preferences = self.get_object()
+        
+        return Response({
+            'email_notifications': preferences.email_notifications,
+            'discord_integration': {
+                'is_linked': bool(request.user.discord_id and request.user.discord_verified),
+                'discord_username': request.user.discord_id,  # Could store actual username separately
+                'sync_activities': True  # This could be a preference
+            }
+        })
 
 
 class BotIntegrationView(APIView):
