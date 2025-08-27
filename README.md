@@ -1,4 +1,4 @@
-# Propel2Excel Points System
+# Discord Points System
 
 A career-focused Discord bot that motivates and rewards student achievement through a points system, real-time activity tracking, moderation tools, and interactive rewards - creating an engaging, supportive, and growth-driven online community.
 
