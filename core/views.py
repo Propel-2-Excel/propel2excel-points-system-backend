@@ -6,6 +6,9 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import authenticate
 from django.db import transaction, models
 from django.utils import timezone
+from django.core.cache import cache
+from django.views.decorators.cache import cache_page
+from django.utils.decorators import method_decorator
 import asyncio
 import aiohttp
 import logging
@@ -200,10 +203,74 @@ class PointsLogViewSet(viewsets.ReadOnlyModelViewSet):
     permission_classes = [permissions.IsAuthenticated]
     
     def get_queryset(self):
-        """Users can only see their own points logs"""
+        """HIGHLY OPTIMIZED: Users can only see their own points logs"""
+        # CRITICAL PERFORMANCE OPTIMIZATION
+        # Uses indexes: idx_points_logs_user_timestamp, idx_points_logs_user_activity
+        base_queryset = PointsLog.objects.select_related(
+            'activity',  # Prevent N+1 queries for activity data
+            'user'       # Prevent N+1 queries for user data
+        ).prefetch_related(
+            'activity__category'  # If activity has category relationships
+        )
+        
         if self.request.user.role == 'admin':
-            return PointsLog.objects.all()
-        return PointsLog.objects.filter(user=self.request.user)
+            queryset = base_queryset.all()
+        else:
+            # OPTIMIZED: Uses idx_points_logs_user_timestamp index
+            queryset = base_queryset.filter(user=self.request.user)
+        
+        # FLEXIBLE LIMITING: Optional pagination for lifetime data access
+        # No limit specified = full lifetime data
+        # With limit = performance optimization for recent data
+        limit_param = self.request.GET.get('limit')
+        if limit_param:
+            limit = min(int(limit_param), 1000)  # Higher cap for lifetime view
+            return queryset.order_by('-timestamp')[:limit]
+        else:
+            # No limit = full lifetime data (complete earnings history)
+            return queryset.order_by('-timestamp')
+    
+    def list(self, request):
+        """SUPER OPTIMIZED with CACHING: Use values() for API responses to reduce data transfer"""
+        # CACHING: Check for cached data first
+        limit_param = request.GET.get('limit')
+        if limit_param:
+            limit = min(int(limit_param), 1000)
+            cache_key = f"points_history_{request.user.id}_{limit}"
+        else:
+            limit = None
+            cache_key = f"points_history_{request.user.id}_lifetime"
+        
+        cached_data = cache.get(cache_key)
+        if cached_data:
+            return Response(cached_data)
+        
+        queryset = self.get_queryset()
+        
+        # PERFORMANCE: Only fetch needed fields, reduce memory usage
+        optimized_data = queryset.values(
+            'id', 'points_earned', 'timestamp', 'details',
+            'activity__name', 'activity__category', 'activity__points_value'
+        )
+        
+        # Convert to list and format timestamps
+        formatted_data = []
+        for item in optimized_data:
+            formatted_item = dict(item)
+            formatted_item['timestamp'] = item['timestamp'].isoformat()
+            formatted_data.append(formatted_item)
+        
+        response_data = {
+            'count': len(formatted_data),
+            'results': formatted_data,
+            'is_lifetime_data': limit is None,
+            'limit_applied': limit
+        }
+        
+        # CACHE: Store results for 5 minutes (300 seconds)
+        cache.set(cache_key, response_data, 300)
+        
+        return Response(response_data)
 
 class IncentiveViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = Incentive.objects.filter(is_active=True)
@@ -545,13 +612,21 @@ class ProfessionalAvailabilityViewSet(viewsets.ModelViewSet):
 # New API endpoints for frontend requirements
 
 class DashboardStatsView(APIView):
-    """Dashboard statistics with trends endpoint"""
+    """Dashboard statistics with trends endpoint - HIGHLY OPTIMIZED with CACHING"""
     permission_classes = [permissions.IsAuthenticated]
     
     def get(self, request):
-        """Get dashboard statistics with period-over-period comparison"""
+        """Get dashboard statistics with period-over-period comparison - CACHED"""
         from datetime import datetime, timedelta
         from django.db.models import Count, Sum
+        
+        # CACHING: Check for cached dashboard stats first
+        period = request.GET.get('period', '30days')
+        cache_key = f"dashboard_stats_{request.user.id}_{period}"
+        cached_data = cache.get(cache_key)
+        
+        if cached_data:
+            return Response(cached_data)
         
         period = request.GET.get('period', '30days')
         
@@ -572,22 +647,29 @@ class DashboardStatsView(APIView):
         
         user = request.user
         
-        # Current period stats
-        current_logs = PointsLog.objects.filter(
+        # OPTIMIZED: Single query for current period stats using index
+        # Uses idx_points_logs_user_timestamp for optimal performance
+        current_stats = PointsLog.objects.filter(
             user=user,
             timestamp__gte=current_start
+        ).aggregate(
+            points_earned=Sum('points_earned'),
+            activity_count=Count('id')
         )
-        current_points_earned = current_logs.aggregate(Sum('points_earned'))['points_earned__sum'] or 0
-        current_activities = current_logs.count()
+        current_points_earned = current_stats['points_earned'] or 0
+        current_activities = current_stats['activity_count'] or 0
         
-        # Previous period stats
-        previous_logs = PointsLog.objects.filter(
+        # OPTIMIZED: Single query for previous period stats
+        previous_stats = PointsLog.objects.filter(
             user=user,
             timestamp__gte=previous_start,
             timestamp__lt=previous_end
+        ).aggregate(
+            points_earned=Sum('points_earned'),
+            activity_count=Count('id')
         )
-        previous_points_earned = previous_logs.aggregate(Sum('points_earned'))['points_earned__sum'] or 0
-        previous_activities = previous_logs.count()
+        previous_points_earned = previous_stats['points_earned'] or 0
+        previous_activities = previous_stats['activity_count'] or 0
         
         # Calculate trends
         def calculate_trend(current, previous):
@@ -614,7 +696,8 @@ class DashboardStatsView(APIView):
             points_required__lte=user.total_points
         ).count()
         
-        return Response({
+        # CACHING: Prepare response data
+        response_data = {
             'current_period': {
                 'total_points': user.total_points,
                 'activities_completed': current_activities,
@@ -634,17 +717,23 @@ class DashboardStatsView(APIView):
                 'activities_completed': calculate_trend(current_activities, previous_activities),
                 'points_earned': calculate_trend(current_points_earned, previous_points_earned)
             }
-        })
+        }
+        
+        # CACHE: Store results for 10 minutes (600 seconds) - Dashboard stats change less frequently
+        cache.set(cache_key, response_data, 600)
+        
+        return Response(response_data)
 
 
 class PointsTimelineView(APIView):
-    """Points timeline chart endpoint"""
+    """Points timeline chart endpoint - HIGHLY OPTIMIZED"""
     permission_classes = [permissions.IsAuthenticated]
     
     def get(self, request):
-        """Get historical points data grouped by time periods"""
+        """Get historical points data grouped by time periods - OPTIMIZED"""
         from datetime import datetime, timedelta, date
-        from django.db.models import Sum
+        from django.db.models import Sum, Q
+        from django.db import connection
         
         granularity = request.GET.get('granularity', 'daily')
         days = int(request.GET.get('days', 30))
@@ -652,101 +741,176 @@ class PointsTimelineView(APIView):
         user = request.user
         start_date = timezone.now() - timedelta(days=days)
         
-        # Get all points logs in the period
-        logs = PointsLog.objects.filter(
+        # CACHE: Check for cached timeline data
+        cache_key = f"points_timeline_{user.id}_{granularity}_{days}"
+        cached_data = cache.get(cache_key)
+        if cached_data:
+            return Response(cached_data)
+        
+        # OPTIMIZED: Single query for all points logs in period with aggregation
+        # Uses idx_points_logs_user_timestamp index
+        logs_aggregated = PointsLog.objects.filter(
             user=user,
             timestamp__gte=start_date
-        ).order_by('timestamp')
+        ).extra(
+            select={'date': "DATE(timestamp)"}
+        ).values('date').annotate(
+            points_earned=Sum('points_earned'),
+            activities_count=Sum(1)
+        ).order_by('date')
         
-        # Group by granularity
+        # OPTIMIZED: Single query for all redemptions in period with aggregation
+        # Uses idx_redemptions_user_timestamp index
+        redemptions_aggregated = Redemption.objects.filter(
+            user=user,
+            redeemed_at__gte=start_date
+        ).extra(
+            select={'date': "DATE(redeemed_at)"}
+        ).values('date').annotate(
+            points_spent=Sum('points_spent'),
+            redemptions_count=Sum(1)
+        ).order_by('date')
+        
+        # Convert to dictionaries for fast lookup
+        logs_dict = {item['date']: item for item in logs_aggregated}
+        redemptions_dict = {item['date']: item for item in redemptions_aggregated}
+        
+        # Calculate starting cumulative points
+        period_earned = sum(item['points_earned'] for item in logs_aggregated)
+        period_redeemed = sum(item['points_spent'] for item in redemptions_aggregated)
+        cumulative_points = user.total_points - period_earned + period_redeemed
+        
+        # Generate timeline efficiently
         timeline = []
-        if granularity == 'weekly':
-            # Group by weeks
-            current_date = start_date.date()
-            end_date = timezone.now().date()
-            cumulative_points = user.total_points - logs.aggregate(Sum('points_earned'))['points_earned__sum'] or 0
-            
+        current_date = start_date.date()
+        end_date = timezone.now().date()
+        
+        if granularity == 'daily':
+            while current_date <= end_date:
+                date_str = current_date.isoformat()
+                
+                # Get data for this date (default to 0 if no data)
+                day_logs = logs_dict.get(current_date, {'points_earned': 0, 'activities_count': 0})
+                day_redemptions = redemptions_dict.get(current_date, {'points_spent': 0, 'redemptions_count': 0})
+                
+                points_earned = day_logs['points_earned']
+                points_redeemed = day_redemptions['points_spent']
+                net_points = points_earned - points_redeemed
+                cumulative_points += net_points
+                
+                timeline.append({
+                    'date': date_str,
+                    'points_earned': points_earned,
+                    'points_redeemed': points_redeemed,
+                    'net_points': net_points,
+                    'cumulative_points': cumulative_points,
+                    'activities_count': day_logs['activities_count'],
+                    'redemptions_count': day_redemptions['redemptions_count']
+                })
+                
+                current_date += timedelta(days=1)
+                
+        elif granularity == 'weekly':
             while current_date <= end_date:
                 week_end = current_date + timedelta(days=6)
-                week_logs = logs.filter(
-                    timestamp__date__gte=current_date,
-                    timestamp__date__lte=week_end
-                )
-                points_earned = week_logs.aggregate(Sum('points_earned'))['points_earned__sum'] or 0
-                cumulative_points += points_earned
+                week_logs = []
+                week_redemptions = []
+                
+                # Collect data for the week
+                temp_date = current_date
+                while temp_date <= week_end and temp_date <= end_date:
+                    if temp_date in logs_dict:
+                        week_logs.append(logs_dict[temp_date])
+                    if temp_date in redemptions_dict:
+                        week_redemptions.append(redemptions_dict[temp_date])
+                    temp_date += timedelta(days=1)
+                
+                # Aggregate week data
+                points_earned = sum(item['points_earned'] for item in week_logs)
+                points_redeemed = sum(item['points_spent'] for item in week_redemptions)
+                activities_count = sum(item['activities_count'] for item in week_logs)
+                redemptions_count = sum(item['redemptions_count'] for item in week_redemptions)
+                
+                net_points = points_earned - points_redeemed
+                cumulative_points += net_points
                 
                 timeline.append({
                     'date': current_date.isoformat(),
                     'points_earned': points_earned,
+                    'points_redeemed': points_redeemed,
+                    'net_points': net_points,
                     'cumulative_points': cumulative_points,
-                    'activities_count': week_logs.count()
+                    'activities_count': activities_count,
+                    'redemptions_count': redemptions_count
                 })
                 
                 current_date += timedelta(days=7)
                 
         elif granularity == 'monthly':
-            # Group by months - simplified to 30-day chunks
-            current_date = start_date.date()
-            end_date = timezone.now().date()
-            cumulative_points = user.total_points - logs.aggregate(Sum('points_earned'))['points_earned__sum'] or 0
-            
             while current_date <= end_date:
                 month_end = current_date + timedelta(days=29)
-                month_logs = logs.filter(
-                    timestamp__date__gte=current_date,
-                    timestamp__date__lte=month_end
-                )
-                points_earned = month_logs.aggregate(Sum('points_earned'))['points_earned__sum'] or 0
-                cumulative_points += points_earned
+                month_logs = []
+                month_redemptions = []
+                
+                # Collect data for the month
+                temp_date = current_date
+                while temp_date <= month_end and temp_date <= end_date:
+                    if temp_date in logs_dict:
+                        month_logs.append(logs_dict[temp_date])
+                    if temp_date in redemptions_dict:
+                        month_redemptions.append(redemptions_dict[temp_date])
+                    temp_date += timedelta(days=1)
+                
+                # Aggregate month data
+                points_earned = sum(item['points_earned'] for item in month_logs)
+                points_redeemed = sum(item['points_spent'] for item in month_redemptions)
+                activities_count = sum(item['activities_count'] for item in month_logs)
+                redemptions_count = sum(item['redemptions_count'] for item in month_redemptions)
+                
+                net_points = points_earned - points_redeemed
+                cumulative_points += net_points
                 
                 timeline.append({
                     'date': current_date.isoformat(),
                     'points_earned': points_earned,
+                    'points_redeemed': points_redeemed,
+                    'net_points': net_points,
                     'cumulative_points': cumulative_points,
-                    'activities_count': month_logs.count()
+                    'activities_count': activities_count,
+                    'redemptions_count': redemptions_count
                 })
                 
                 current_date += timedelta(days=30)
-                
-        else:  # daily
-            current_date = start_date.date()
-            end_date = timezone.now().date()
-            cumulative_points = user.total_points - logs.aggregate(Sum('points_earned'))['points_earned__sum'] or 0
-            
-            while current_date <= end_date:
-                day_logs = logs.filter(timestamp__date=current_date)
-                points_earned = day_logs.aggregate(Sum('points_earned'))['points_earned__sum'] or 0
-                cumulative_points += points_earned
-                
-                timeline.append({
-                    'date': current_date.isoformat(),
-                    'points_earned': points_earned,
-                    'cumulative_points': cumulative_points,
-                    'activities_count': day_logs.count()
-                })
-                
-                current_date += timedelta(days=1)
         
-        # Calculate summary stats
-        total_points_earned = logs.aggregate(Sum('points_earned'))['points_earned__sum'] or 0
+        # Calculate summary stats efficiently
+        total_points_earned = period_earned
+        total_points_redeemed = period_redeemed
+        net_points_change = total_points_earned - total_points_redeemed
         average_daily_points = total_points_earned / days if days > 0 else 0
         
         # Find most active date
         most_active_date = None
         if timeline:
-            most_active = max(timeline, key=lambda x: x['points_earned'])
-            if most_active['points_earned'] > 0:
+            most_active = max(timeline, key=lambda x: x.get('net_points', x['points_earned']))
+            if most_active.get('net_points', most_active['points_earned']) > 0:
                 most_active_date = most_active['date']
         
-        return Response({
+        response_data = {
             'timeline': timeline,
             'summary': {
                 'total_days': days,
                 'total_points_earned': total_points_earned,
+                'total_points_redeemed': total_points_redeemed,
+                'net_points_change': net_points_change,
                 'average_daily_points': round(average_daily_points, 1),
                 'most_active_date': most_active_date
             }
-        })
+        }
+        
+        # CACHE: Store results for 10 minutes (600 seconds)
+        cache.set(cache_key, response_data, 600)
+        
+        return Response(response_data)
 
 
 class LeaderboardView(APIView):
@@ -837,12 +1001,19 @@ class LeaderboardView(APIView):
 
 
 class RewardsAvailableView(APIView):
-    """Enhanced rewards system - available rewards"""
+    """Enhanced rewards system - available rewards with CACHING"""
     permission_classes = [permissions.IsAuthenticated]
     
     def get(self, request):
-        """Get available rewards with redemption info"""
+        """Get available rewards with redemption info - CACHED"""
         user = request.user
+        
+        # CACHE: Check for cached rewards data
+        cache_key = f"rewards_available_{user.id}"
+        cached_data = cache.get(cache_key)
+        if cached_data:
+            return Response(cached_data)
+        
         rewards = Incentive.objects.filter(is_active=True).order_by('points_required')
         
         rewards_data = []
@@ -862,9 +1033,14 @@ class RewardsAvailableView(APIView):
                 'sponsor': reward.sponsor
             })
         
-        return Response({
+        response_data = {
             'rewards': rewards_data
-        })
+        }
+        
+        # CACHE: Store results for 5 minutes (300 seconds) - Rewards change occasionally
+        cache.set(cache_key, response_data, 300)
+        
+        return Response(response_data)
 
 
 class RedeemRewardView(APIView):
@@ -981,6 +1157,112 @@ class RedemptionHistoryView(APIView):
         return Response({
             'redemptions': redemption_data
         })
+
+
+class UnifiedActivityFeedView(APIView):
+    """PHASE 1 FIX: Combined activity and redemption feed for recent activity"""
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request):
+        """HIGHLY OPTIMIZED with CACHING: Get unified activity feed with minimal database queries"""
+        user = request.user
+        
+        # FLEXIBLE LIMITING: Optional pagination for lifetime data access
+        limit_param = request.GET.get('limit')
+        if limit_param:
+            limit = min(int(limit_param), 1000)  # Higher cap for lifetime view
+            cache_key = f"activity_feed_{request.user.id}_{limit}"
+        else:
+            limit = None
+            cache_key = f"activity_feed_{request.user.id}_lifetime"
+        
+        # CACHING: Check for cached data first
+        cached_data = cache.get(cache_key)
+        if cached_data:
+            return Response(cached_data)
+        
+        # SUPER OPTIMIZED: Use values() to minimize data transfer and memory usage
+        # Uses idx_points_logs_user_timestamp index for optimal performance
+        if limit:
+            activities_data = PointsLog.objects.filter(user=user).values(
+                'id', 'timestamp', 'points_earned', 'details',
+                'activity__name', 'activity__category'
+            ).order_by('-timestamp')[:limit]
+        else:
+            # No limit = full lifetime data
+            activities_data = PointsLog.objects.filter(user=user).values(
+                'id', 'timestamp', 'points_earned', 'details',
+                'activity__name', 'activity__category'
+            ).order_by('-timestamp')
+        
+        # SUPER OPTIMIZED: Use values() for redemptions
+        # Uses idx_redemptions_user_timestamp index
+        if limit:
+            redemptions_data = Redemption.objects.filter(user=user).values(
+                'id', 'redeemed_at', 'points_spent', 'status',
+                'incentive__name'
+            ).order_by('-redeemed_at')[:limit]
+        else:
+            # No limit = full lifetime redemptions
+            redemptions_data = Redemption.objects.filter(user=user).values(
+                'id', 'redeemed_at', 'points_spent', 'status',
+                'incentive__name'
+            ).order_by('-redeemed_at')
+        
+        # OPTIMIZED: Combine and format with minimal processing
+        feed_items = []
+        
+        # Add activities - minimal object creation
+        for activity in activities_data:
+            feed_items.append({
+                'id': f"activity_{activity['id']}",
+                'type': 'activity',
+                'timestamp': activity['timestamp'].isoformat(),
+                'points_change': activity['points_earned'],  # Positive
+                'description': f"Completed: {activity['activity__name']}",
+                'details': {
+                    'activity_name': activity['activity__name'],
+                    'activity_category': activity['activity__category'],
+                    'points_earned': activity['points_earned']
+                }
+            })
+        
+        # Add redemptions - minimal object creation
+        for redemption in redemptions_data:
+            feed_items.append({
+                'id': f"redemption_{redemption['id']}",
+                'type': 'redemption', 
+                'timestamp': redemption['redeemed_at'].isoformat(),
+                'points_change': -redemption['points_spent'],  # Negative
+                'description': f"Redeemed: {redemption['incentive__name']}",
+                'details': {
+                    'reward_name': redemption['incentive__name'],
+                    'points_spent': redemption['points_spent'],
+                    'status': redemption['status']
+                }
+            })
+        
+        # Sort by timestamp (most recent first)
+        feed_items.sort(key=lambda x: x['timestamp'], reverse=True)
+        
+        # Only apply limit if it was specified (for lifetime data, show all)
+        if limit:
+            feed_items = feed_items[:limit]
+        
+        # CACHING: Prepare response data
+        response_data = {
+            'feed': feed_items,
+            'total_items': len(feed_items),
+            'is_lifetime_data': limit is None,
+            'limit_applied': limit,
+            'total_activities': len([item for item in feed_items if item['type'] == 'activity']),
+            'total_redemptions': len([item for item in feed_items if item['type'] == 'redemption'])
+        }
+        
+        # CACHE: Store results for 5 minutes (300 seconds) - Activity feed changes frequently
+        cache.set(cache_key, response_data, 300)
+        
+        return Response(response_data)
 
 
 class UserPreferencesViewSet(viewsets.ModelViewSet):

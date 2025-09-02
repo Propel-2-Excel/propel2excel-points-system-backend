@@ -1,7 +1,8 @@
 from django.urls import path, include
 from .views import (
     BotIntegrationView, LinkView, FormSubmissionView, ProfessionalAvailabilityFormView, DiscordValidationView,
-    DashboardStatsView, PointsTimelineView, LeaderboardView, RewardsAvailableView, RedeemRewardView, RedemptionHistoryView
+    DashboardStatsView, PointsTimelineView, LeaderboardView, RewardsAvailableView, RedeemRewardView, RedemptionHistoryView,
+    UnifiedActivityFeedView
 )
 from rest_framework.routers import DefaultRouter
 from .views import (
@@ -34,6 +35,7 @@ urlpatterns = [
     path('api/rewards/available/', RewardsAvailableView.as_view(), name='rewards-available'),
     path('api/rewards/redeem/', RedeemRewardView.as_view(), name='redeem-reward'),
     path('api/redemptions/history/', RedemptionHistoryView.as_view(), name='redemption-history'),
+    path('api/activity/feed/', UnifiedActivityFeedView.as_view(), name='unified-activity-feed'),
     
     # Existing endpoints
     path('api/bot/', BotIntegrationView.as_view(), name='bot-integration'),
