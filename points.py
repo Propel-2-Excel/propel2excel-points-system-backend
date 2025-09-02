@@ -134,6 +134,39 @@ class Points(commands.Cog):
             print(f"Error calling backend API: {e}")
             return None
 
+    async def call_backend_api_direct(self, user_id, activity_type, details):
+        """Call backend API directly with activity type"""
+        try:
+            from bot import BACKEND_API_URL, BOT_SHARED_SECRET
+            import aiohttp
+
+            payload = {
+                "action": "add-activity",
+                "discord_id": user_id,
+                "activity_type": activity_type,
+                "details": details,
+            }
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{BACKEND_API_URL}/api/bot/",
+                    json=payload,
+                    headers={
+                        "Content-Type": "application/json",
+                        "X-Bot-Secret": BOT_SHARED_SECRET,
+                    }
+                ) as response:
+                    if response.status == 200:
+                        return await response.json()
+                    else:
+                        error_text = await response.text()
+                        print(f"Backend API error: {response.status} - {error_text}")
+                        return None
+                    
+        except Exception as e:
+            print(f"Error calling backend API direct: {e}")
+            return None
+
     def get_next_milestone(self, current_points):
         """Get the next milestone the user can work towards"""
         milestones = [
@@ -387,13 +420,20 @@ class Points(commands.Cog):
     async def event(self, ctx):
         """Mark event attendance for +15 points"""
         try:
-            self.add_points(str(ctx.author.id), 15, "Event attendance")
-            embed = discord.Embed(
-                title="🎉 Event Attendance",
-                description=f"{ctx.author.mention}, you've earned **15 points** for attending the event!",
-                color=0x00ff00
-            )
-            await ctx.send(embed=embed)
+            # Call backend API directly
+            response_data = await self.call_backend_api_direct(str(ctx.author.id), "event_attendance", "Event attendance")
+            
+            if response_data:
+                total_points = response_data.get("total_points", 0)
+                embed = discord.Embed(
+                    title="🎉 Event Attendance",
+                    description=f"{ctx.author.mention}, you've earned **15 points** for attending the event!",
+                    color=0x00ff00
+                )
+                embed.add_field(name="🏆 Your Total", value=f"**{total_points} points**", inline=True)
+                await ctx.send(embed=embed)
+            else:
+                await ctx.send("❌ An error occurred while processing your event attendance.")
         except Exception as e:
             await ctx.send("❌ An error occurred while processing your event attendance.")
             print(f"Error in event command: {e}")
@@ -401,55 +441,42 @@ class Points(commands.Cog):
     @commands.command()
     @commands.cooldown(1, 10, commands.BucketType.user)  # 1 use per 10 seconds per user
     async def resource(self, ctx, *, description):
-        """Submit a resource for admin review and potential points"""
+        """Share a resource for +10 points"""
         try:
             # Check if user provided a description
             if not description or len(description.strip()) < 10:
                 await ctx.send("❌ Please provide a detailed description of your resource (at least 10 characters).\n\n**Usage:** `!resource <description of the resource you want to share>`")
                 return
             
-            # For MVP, do not persist local resource submissions; just notify admins
+            # Call backend API directly to award points immediately
+            response_data = await self.call_backend_api_direct(str(ctx.author.id), "resource_share", f"Resource share: {description[:100]}")
             
-            # Create submission confirmation embed
-            embed = discord.Embed(
-                title="📚 Resource Submission Received",
-                description=f"{ctx.author.mention}, your resource has been submitted for admin review!",
-                color=0x0099ff
-            )
-            
-            embed.add_field(
-                name="📝 Description",
-                value=description[:1000] + "..." if len(description) > 1000 else description,
-                inline=False
-            )
-            
-            embed.add_field(
-                name="⏳ Status",
-                value="🔄 **Pending Review**",
-                inline=True
-            )
-            
-            embed.add_field(
-                name="🎯 Potential Reward",
-                value="**10 points** (if approved)",
-                inline=True
-            )
-            
-            embed.add_field(
-                name="📋 Next Steps",
-                value="An admin will review your submission and award points if approved. You'll be notified of the decision!",
-                inline=False
-            )
-            
-            embed.set_footer(text="Thank you for contributing to the community!")
-            
-            await ctx.send(embed=embed)
-            
-            # Notify admins about the new submission
-            await self.notify_admins_of_submission(ctx, description)
+            if response_data:
+                total_points = response_data.get("total_points", 0)
+                embed = discord.Embed(
+                    title="📚 Resource Shared",
+                    description=f"{ctx.author.mention}, you've earned **10 points** for sharing a valuable resource!",
+                    color=0x00ff00
+                )
+                
+                embed.add_field(
+                    name="📝 Resource",
+                    value=description[:500] + "..." if len(description) > 500 else description,
+                    inline=False
+                )
+                
+                embed.add_field(name="🏆 Your Total", value=f"**{total_points} points**", inline=True)
+                embed.set_footer(text="Thank you for contributing to the community!")
+                
+                await ctx.send(embed=embed)
+                
+                # Still notify admins for visibility (optional)
+                # await self.notify_admins_of_resource_share(ctx, description)
+            else:
+                await ctx.send("❌ An error occurred while processing your resource share.")
             
         except Exception as e:
-            await ctx.send("❌ An error occurred while submitting your resource. Please try again.")
+            await ctx.send("❌ An error occurred while processing your resource share.")
             print(f"Error in resource command: {e}")
 
     async def notify_admins_of_submission(self, ctx, description):
@@ -508,13 +535,20 @@ class Points(commands.Cog):
     async def linkedin(self, ctx):
         """Post LinkedIn update for +5 points"""
         try:
-            self.add_points(str(ctx.author.id), 5, "LinkedIn update")
-            embed = discord.Embed(
-                title="💼 LinkedIn Update",
-                description=f"{ctx.author.mention}, you've earned **5 points** for posting a LinkedIn update!",
-                color=0x00ff00
-            )
-            await ctx.send(embed=embed)
+            # Call backend API directly
+            response_data = await self.call_backend_api_direct(str(ctx.author.id), "linkedin_post", "LinkedIn update")
+            
+            if response_data:
+                total_points = response_data.get("total_points", 0)
+                embed = discord.Embed(
+                    title="💼 LinkedIn Update",
+                    description=f"{ctx.author.mention}, you've earned **5 points** for posting a LinkedIn update!",
+                    color=0x00ff00
+                )
+                embed.add_field(name="🏆 Your Total", value=f"**{total_points} points**", inline=True)
+                await ctx.send(embed=embed)
+            else:
+                await ctx.send("❌ An error occurred while processing your LinkedIn update.")
         except Exception as e:
             await ctx.send("❌ An error occurred while processing your LinkedIn update.")
             print(f"Error in linkedin command: {e}")
@@ -531,7 +565,7 @@ class Points(commands.Cog):
             )
             embed.add_field(name="📄 Resume Upload", value="+20 points", inline=True)
             embed.add_field(name="🎉 Event Attendance", value="+15 points", inline=True)
-            embed.add_field(name="📚 Resource Share", value="+10 points (after admin review)", inline=True)
+            embed.add_field(name="📚 Resource Share", value="+10 points", inline=True)
             embed.add_field(name="💼 LinkedIn Update", value="+5 points", inline=True)
             embed.add_field(name="👍 Liking/Interacting", value="+2 points", inline=True)
             embed.add_field(name="💬 Message Sent", value="+1 points", inline=True)
@@ -642,7 +676,7 @@ class Points(commands.Cog):
             
             embed.add_field(
                 name="📝 Description",
-                value=description[:500] + "..." if len(description) > 500 else description,
+                value="Resource description not available",
                 inline=False
             )
             
@@ -693,7 +727,7 @@ class Points(commands.Cog):
             
             embed.add_field(
                 name="📝 Description",
-                value=description[:500] + "..." if len(description) > 500 else description,
+                value="Resource description not available",
                 inline=False
             )
             
