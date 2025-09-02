@@ -15,9 +15,10 @@ venv.bak/
 .vscode/
 *.log
 
-# Markdown files (excluding README.md only)
+# Markdown files (excluding README.md and DEPLOYMENT_SECURITY_ENHANCEMENTS.md)
 *.md
 !README.md
+!DEPLOYMENT_SECURITY_ENHANCEMENTS.md
 !Student Portal Design.md
 !DEPLOYMENT_SECURITY_ENHANCEMENTS.md
 
