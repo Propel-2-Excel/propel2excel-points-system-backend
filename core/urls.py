@@ -2,7 +2,7 @@ from django.urls import path, include
 from .views import (
     BotIntegrationView, LinkView, FormSubmissionView, ProfessionalAvailabilityFormView, DiscordValidationView,
     DashboardStatsView, PointsTimelineView, LeaderboardView, RewardsAvailableView, RedeemRewardView, RedemptionHistoryView,
-    UnifiedActivityFeedView
+    UnifiedActivityFeedView, health_check
 )
 from rest_framework.routers import DefaultRouter
 from .views import (
@@ -27,6 +27,9 @@ router.register(r'user-preferences', UserPreferencesViewSet, basename='userprefe
 
 urlpatterns = [
     # IMPORTANT: Specific API endpoints MUST come BEFORE router.urls to avoid conflicts
+    
+    # Health check endpoint
+    path('health/', health_check, name='health-check'),
     
     # New frontend API endpoints
     path('api/dashboard/stats/', DashboardStatsView.as_view(), name='dashboard-stats'),

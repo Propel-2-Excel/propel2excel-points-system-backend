@@ -15,7 +15,27 @@ venv.bak/
 .vscode/
 *.log
 
-# Markdown files (excluding README.md and Student Portal Design.md)
+# Markdown files (excluding README.md and DEPLOYMENT_SECURITY_ENHANCEMENTS.md)
 *.md
 !README.md
+!DEPLOYMENT_SECURITY_ENHANCEMENTS.md
 !Student Portal Design.md
+!DEPLOYMENT_SECURITY_ENHANCEMENTS.md
+
+# Utility scripts - keep local, never commit
+show_complete_mark_zeng_log.py
+find_discord_user.py
+list_discord_users.py
+list_discord_users_with_credentials.py
+test_api_response.py
+mimic_frontend_calls.py
+check_mark_zeng_points.py
+check_username_conflict.py
+check_yuehan_points.py
+delete_yuehan_z.py
+django_shell_aaa.py
+reset_alexanderson.py
+reset_alex_anderson.py
+update_account_aaa.py
+test_api_quick.sh
+
