@@ -7,9 +7,8 @@ import logging
 import sys
 from datetime import datetime
 import math
-import aiohttp
 import json
-from aiohttp import web
+import aiohttp
 
 # Set up logging
 logging.basicConfig(
@@ -747,54 +746,10 @@ async def on_command_error(ctx, error):
         logger.error(f"Unhandled command error: {error}")
         await ctx.send("❌ An unexpected error occurred while processing your command.")
 
-# HTTP Server for Discord validation
-async def validate_handler(request):
-    """HTTP endpoint to validate Discord usernames"""
-    try:
-        # Check authentication
-        auth_header = request.headers.get('X-Bot-Secret', '')
-        if not BOT_SHARED_SECRET or auth_header != BOT_SHARED_SECRET:
-            return web.json_response({"error": "Unauthorized"}, status=401)
-        
-        data = await request.json()
-        discord_username = data.get('discord_username')
-        
-        if not discord_username:
-            return web.json_response({"error": "discord_username is required"}, status=400)
-        
-        # Validate the Discord username
-        result = await validate_discord_username(discord_username)
-        
-        return web.json_response(result)
-        
-    except Exception as e:
-        logger.error(f"Error in validate_handler: {e}")
-        return web.json_response({"error": "Internal server error"}, status=500)
-
-async def create_http_server():
-    """Create and start the HTTP server for bot API"""
-    app = web.Application()
-    app.router.add_post('/validate-discord', validate_handler)
-    
-    # Get port from environment or default
-    port = int(os.getenv('BOT_HTTP_PORT', 8001))
-    
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, 'localhost', port)
-    await site.start()
-    
-    logger.info(f"🌐 Bot HTTP server started on http://localhost:{port}")
-    return runner
-
 # Graceful shutdown
-http_runner = None
-
 async def shutdown():
     """Graceful shutdown function"""
     logger.info("🛑 Shutting down bot...")
-    if http_runner:
-        await http_runner.cleanup()
     await bot.close()
 
 # Signal handlers for graceful shutdown
@@ -808,18 +763,13 @@ signal.signal(signal.SIGTERM, signal_handler)
 
 # Main execution
 async def main():
-    """Main function to run bot and HTTP server concurrently"""
-    global http_runner
-    
+    """Main function to run Discord bot only"""
     try:
         logger.info("🤖 Starting Discord Bot...")
         logger.info(f"📋 Bot will use prefix: !")
         logger.info(f"🔗 Connecting to Discord...")
         
-        # Start HTTP server
-        http_runner = await create_http_server()
-        
-        # Start bot
+        # Start bot (no HTTP server needed)
         await bot.start(TOKEN)
         
     except KeyboardInterrupt:

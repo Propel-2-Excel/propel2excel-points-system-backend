@@ -17,6 +17,9 @@ COPY . /app
 
 EXPOSE 8000
 
-# Run migrations then start Gunicorn; PORT is provided by most cloud hosts
-CMD sh -c "python manage.py migrate && gunicorn backend.wsgi:application --bind 0.0.0.0:${PORT:-8000}"
+# Make startup script executable and use it
+RUN chmod +x start.sh
+
+# Run both Django backend AND Discord bot using startup script
+CMD ["./start.sh"]
 

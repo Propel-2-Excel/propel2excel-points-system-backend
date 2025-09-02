@@ -9,9 +9,8 @@ from django.utils import timezone
 from django.core.cache import cache
 from django.views.decorators.cache import cache_page
 from django.utils.decorators import method_decorator
-import asyncio
-import aiohttp
 import logging
+import requests
 
 logger = logging.getLogger(__name__)
 from .models import User, Activity, PointsLog, Incentive, Redemption, UserStatus, UserIncentiveUnlock, DiscordLinkCode, Professional, ReviewRequest, ScheduledSession, ProfessionalAvailability, UserPreferences
@@ -2138,14 +2137,21 @@ class BotIntegrationView(APIView):
         if not discord_username:
             return Response({"error": "discord_username is required"}, status=400)
         
-        # This method is called by the bot when validating Discord usernames
-        # The bot will have already checked the server membership
-        # For now, return a placeholder response that the bot can implement
-        return Response({
-            "valid": False,
-            "message": "Bot must implement Discord server member validation",
-            "discord_username": discord_username
-        })
+        # Use the same Discord API validation logic
+        validation_result = self._validate_with_discord_api(discord_username)
+        
+        if validation_result['success']:
+            return Response({
+                "valid": validation_result['valid'],
+                "message": validation_result['message'],
+                "discord_id": validation_result.get('discord_id'),
+                "discord_username": validation_result.get('discord_username')
+            }, status=200)
+        else:
+            return Response({
+                "valid": False,
+                "message": validation_result['message']
+            }, status=200)
 
 
 class LinkView(APIView):
@@ -2466,80 +2472,152 @@ class DiscordValidationView(APIView):
             }, status=status.HTTP_200_OK)
     
     def _validate_with_bot(self, discord_username):
-        """Call bot to validate Discord username against server membership"""
-        import aiohttp
-        import asyncio
+        """Call Discord REST API directly to validate username against server membership"""
+        import requests
         from django.conf import settings
         
         try:
-            # Run the async bot validation call
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            result = loop.run_until_complete(self._async_validate_with_bot(discord_username))
-            loop.close()
-            return result
+            return self._validate_with_discord_api(discord_username)
         except Exception as e:
             import logging
             logger = logging.getLogger(__name__)
-            logger.error(f"Error validating Discord username with bot: {e}")
+            logger.error(f"Error validating Discord username with Discord API: {e}")
             return {
                 'success': False,
                 'message': 'Unable to validate Discord username at this time. Please try again later.'
             }
     
-    async def _async_validate_with_bot(self, discord_username):
-        """Async call to bot HTTP server for Discord validation"""
+    def _validate_with_discord_api(self, discord_username):
+        """Direct call to Discord REST API for username validation"""
         from django.conf import settings
+        import requests
         
-        # Bot HTTP server URL (different from backend URL)
-        bot_http_port = getattr(settings, 'BOT_HTTP_PORT', 8001)
-        bot_http_url = f"http://localhost:{bot_http_port}"
-        bot_secret = getattr(settings, 'BOT_SHARED_SECRET', '')
+        discord_token = getattr(settings, 'DISCORD_TOKEN', '')
+        guild_id = getattr(settings, 'DISCORD_GUILD_ID', '')
         
-        if not bot_secret:
+        if not discord_token:
             return {
                 'success': False,
-                'message': 'Bot integration not configured'
+                'message': 'Discord integration not configured.'
             }
         
-        async with aiohttp.ClientSession() as session:
-            payload = {
-                "discord_username": discord_username
+        if not guild_id:
+            return {
+                'success': False,
+                'message': 'Discord server not configured.'
+            }
+        
+        # Search for the user by username (can include discriminator)
+        username_parts = discord_username.split('#')
+        base_username = username_parts[0]
+        discriminator = username_parts[1] if len(username_parts) > 1 else None
+        
+        try:
+            # Call Discord API to search guild members
+            headers = {
+                "Authorization": f"Bot {discord_token}",
+                "Content-Type": "application/json"
             }
             
-            try:
-                async with session.post(
-                    f"{bot_http_url}/validate-discord",
-                    json=payload,
-                    headers={
-                        "Content-Type": "application/json",
-                        "X-Bot-Secret": bot_secret,
-                    },
-                    timeout=aiohttp.ClientTimeout(total=10)
-                ) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        return {
-                            'success': True,
-                            'valid': data.get('valid', False),
-                            'message': data.get('message', ''),
-                            'discord_id': data.get('discord_id'),
-                            'display_name': data.get('display_name'),
-                            'username': data.get('username')
-                        }
-                    else:
-                        error_text = await response.text()
-                        return {
-                            'success': False,
-                            'message': f'Bot validation failed: {error_text}'
-                        }
-            except asyncio.TimeoutError:
+            # Search for members with the username
+            response = requests.get(
+                f"https://discord.com/api/v10/guilds/{guild_id}/members/search",
+                params={"query": base_username, "limit": 100},
+                headers=headers,
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                members = response.json()
+                
+                # Search through results for exact username match
+                for member in members:
+                    user = member.get('user', {})
+                    member_username = user.get('username', '')
+                    member_discriminator = user.get('discriminator', '0000')
+                    
+                    # Check against unique Discord username
+                    if member_username.lower() == base_username.lower():
+                        # If discriminator provided, verify it matches
+                        if discriminator is not None:
+                            if member_discriminator == discriminator:
+                                return {
+                                    'success': True,
+                                    'valid': True,
+                                    'message': f"User found in Discord server",
+                                    'discord_id': user.get('id'),
+                                    'discord_username': f"{member_username}#{member_discriminator}"
+                                }
+                        else:
+                            # No discriminator provided, username match is sufficient
+                            return {
+                                'success': True,
+                                'valid': True,
+                                'message': f"User found in Discord server",
+                                'discord_id': user.get('id'),
+                                'discord_username': f"{member_username}#{member_discriminator}"
+                            }
+                
+                return {
+                    'success': True,
+                    'valid': False,
+                    'message': f"User '{discord_username}' not found in Discord server"
+                }
+                
+            elif response.status_code == 401:
+                logger.error("Discord API authentication failed - invalid bot token")
                 return {
                     'success': False,
-                    'message': 'Discord validation timed out. Please try again.'
+                    'message': 'Discord authentication failed. Please check configuration.'
                 }
-            except Exception as e:
+            elif response.status_code == 403:
+                logger.error("Discord API forbidden - bot lacks permissions")
                 return {
                     'success': False,
-                    'message': f'Discord validation error: {str(e)}'
+                    'message': 'Discord bot lacks required permissions.'
                 }
+            else:
+                logger.error(f"Discord API error {response.status_code}: {response.text}")
+                return {
+                    'success': False,
+                    'message': f'Discord API error (status {response.status_code})'
+                }
+                
+        except requests.exceptions.Timeout:
+            logger.error("Discord API validation timed out")
+            return {
+                'success': False,
+                'message': 'Discord validation timed out. Please try again.'
+            }
+        except Exception as e:
+            logger.error(f"Error calling Discord API: {e}")
+            return {
+                'success': False,
+                'message': 'Unable to connect to Discord API.'
+            }
+
+
+@api_view(['GET'])
+@permission_classes([permissions.AllowAny])
+def health_check(request):
+    """Simple health check endpoint for deployment monitoring"""
+    from django.db import connection
+    
+    try:
+        # Test database connection
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT 1")
+        
+        return Response({
+            "status": "healthy", 
+            "timestamp": timezone.now(),
+            "database": "connected",
+            "service": "django+discord-bot"
+        }, status=status.HTTP_200_OK)
+    except Exception as e:
+        return Response({
+            "status": "unhealthy", 
+            "timestamp": timezone.now(),
+            "database": "disconnected",
+            "error": str(e)
+        }, status=status.HTTP_503_SERVICE_UNAVAILABLE)

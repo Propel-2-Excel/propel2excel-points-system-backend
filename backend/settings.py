@@ -201,3 +201,7 @@ BOT_SHARED_SECRET = env("BOT_SHARED_SECRET", default="")
 # Shared secret for Google Form webhooks
 FORM_WEBHOOK_SECRET = env("FORM_WEBHOOK_SECRET", default="")
 
+# Discord API Integration
+DISCORD_TOKEN = env("DISCORD_TOKEN", default="")
+DISCORD_GUILD_ID = env("DISCORD_GUILD_ID", default="123456789012345678")  # Default placeholder for testing
+
