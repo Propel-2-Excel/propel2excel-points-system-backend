@@ -178,6 +178,7 @@ AUTH_USER_MODEL = 'core.User'
 CORS_ALLOWED_ORIGINS = env.list("CORS_ALLOWED_ORIGINS", default=[
     "http://localhost:3000",  # Local development
     "http://127.0.0.1:3000",
+    "https://propel2excel-student-dashboard.vercel.app",  # Vercel frontend
 ])
 
 # Allow credentials for JWT authentication
