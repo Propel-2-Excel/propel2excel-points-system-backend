@@ -975,14 +975,28 @@ class LeaderboardView(APIView):
                 'is_current_user': user.id == request.user.id
             })
         
-        # Find current user's rank if not in top users
-        current_user_rank = None
-        if not any(item['is_current_user'] for item in leaderboard):
-            # Calculate current user's total points earned
-            current_user_points_earned = PointsLog.objects.filter(user=request.user).aggregate(
-                total=Sum('points_earned', default=0)
-            )['total'] or 0
-            
+        # Always provide current user's rank information
+        current_user_points_earned = PointsLog.objects.filter(user=request.user).aggregate(
+            total=Sum('points_earned', default=0)
+        )['total'] or 0
+        
+        # Check if current user is already in the leaderboard
+        current_user_in_leaderboard = any(item['is_current_user'] for item in leaderboard)
+        
+        if current_user_in_leaderboard:
+            # Find the current user's entry in the leaderboard
+            current_user_entry = next(item for item in leaderboard if item['is_current_user'])
+            current_user_rank = {
+                'rank': current_user_entry['rank'],
+                'user_id': current_user_entry['user_id'],
+                'username': current_user_entry['username'],
+                'display_name': 'You',
+                'total_points': current_user_entry['total_points'],
+                'points_this_period': current_user_entry['points_this_period'],
+                'is_current_user': True
+            }
+        else:
+            # Calculate current user's position if not in top users
             current_user_position = users_with_monthly_points.filter(
                 Q(total_points_earned__gt=current_user_points_earned) |
                 (Q(total_points_earned=current_user_points_earned) & Q(id__lt=request.user.id))

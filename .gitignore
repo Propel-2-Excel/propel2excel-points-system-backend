@@ -20,7 +20,7 @@ venv.bak/
 !README.md
 !DEPLOYMENT_SECURITY_ENHANCEMENTS.md
 !Student Portal Design.md
-!DEPLOYMENT_SECURITY_ENHANCEMENTS.md
+
 
 # Utility scripts - keep local, never commit
 show_complete_mark_zeng_log.py
