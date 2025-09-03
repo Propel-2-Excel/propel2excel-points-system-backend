@@ -925,27 +925,30 @@ class LeaderboardView(APIView):
         period = request.GET.get('period', 'all_time')
         
         # Base queryset - exclude users without points and ensure they have proper usernames
-        base_queryset = User.objects.exclude(total_points=0).exclude(username__startswith='discord_')
+        # Calculate total points earned from PointsLog (excluding redemptions)
+        base_queryset = User.objects.exclude(username__startswith='discord_').annotate(
+            total_points_earned=Sum('points_logs__points_earned', default=0)
+        ).exclude(total_points_earned=0)
         
         if period == 'weekly':
             # Points earned in last 7 days
             week_ago = timezone.now() - timedelta(days=7)
-            users_with_weekly_points = base_queryset.annotate(
+            users_with_monthly_points = base_queryset.annotate(
                 period_points=Sum('points_logs__points_earned', 
                                 filter=Q(points_logs__timestamp__gte=week_ago))
-            ).exclude(period_points__isnull=True).order_by('-period_points', '-total_points')
+            ).exclude(period_points__isnull=True).order_by('-period_points', '-total_points_earned')
         elif period == 'monthly':
             # Points earned in last 30 days
             month_ago = timezone.now() - timedelta(days=30)
             users_with_monthly_points = base_queryset.annotate(
                 period_points=Sum('points_logs__points_earned', 
                                 filter=Q(points_logs__timestamp__gte=month_ago))
-            ).exclude(period_points__isnull=True).order_by('-period_points', '-total_points')
+            ).exclude(period_points__isnull=True).order_by('-period_points', '-total_points_earned')
         else:
-            # All time points
+            # All time points earned (excluding redemptions)
             users_with_monthly_points = base_queryset.annotate(
-                period_points=models.F('total_points')
-            ).order_by('-total_points')
+                period_points=models.F('total_points_earned')
+            ).order_by('-total_points_earned')
         
         # Get top users
         top_users = users_with_monthly_points[:limit]
@@ -954,9 +957,9 @@ class LeaderboardView(APIView):
         leaderboard = []
         for rank, user in enumerate(top_users, 1):
             # Create privacy-safe display name
-            if hasattr(user, 'preferences') and user.preferences.privacy_settings.get('display_name_preference') == 'first_name_only':
+            if hasattr(user, 'preferences') and user.preferences and user.preferences.privacy_settings.get('display_name_preference') == 'first_name_only':
                 display_name = user.first_name or user.username
-            elif hasattr(user, 'preferences') and user.preferences.privacy_settings.get('display_name_preference') == 'username':
+            elif hasattr(user, 'preferences') and user.preferences and user.preferences.privacy_settings.get('display_name_preference') == 'username':
                 display_name = user.username
             else:
                 display_name = f"{user.first_name} {user.last_name[0]}." if user.first_name and user.last_name else user.username
@@ -966,8 +969,8 @@ class LeaderboardView(APIView):
                 'user_id': user.id,
                 'username': user.username,
                 'display_name': display_name,
-                'total_points': user.total_points,
-                'points_this_period': getattr(user, 'period_points', user.total_points) or 0,
+                'total_points': user.total_points_earned,  # Use points earned, not current balance
+                'points_this_period': getattr(user, 'period_points', user.total_points_earned) or 0,
                 'avatar_url': None,  # Could be added later
                 'is_current_user': user.id == request.user.id
             })
@@ -975,9 +978,14 @@ class LeaderboardView(APIView):
         # Find current user's rank if not in top users
         current_user_rank = None
         if not any(item['is_current_user'] for item in leaderboard):
+            # Calculate current user's total points earned
+            current_user_points_earned = PointsLog.objects.filter(user=request.user).aggregate(
+                total=Sum('points_earned', default=0)
+            )['total'] or 0
+            
             current_user_position = users_with_monthly_points.filter(
-                models.Q(total_points__gt=request.user.total_points) |
-                (models.Q(total_points=request.user.total_points) & models.Q(id__lt=request.user.id))
+                Q(total_points_earned__gt=current_user_points_earned) |
+                (Q(total_points_earned=current_user_points_earned) & Q(id__lt=request.user.id))
             ).count() + 1
             
             current_user_rank = {
@@ -985,8 +993,8 @@ class LeaderboardView(APIView):
                 'user_id': request.user.id,
                 'username': request.user.username,
                 'display_name': 'You',
-                'total_points': request.user.total_points,
-                'points_this_period': getattr(request.user, 'period_points', request.user.total_points) or 0,
+                'total_points': current_user_points_earned,  # Use points earned, not current balance
+                'points_this_period': getattr(request.user, 'period_points', current_user_points_earned) or 0,
                 'is_current_user': True
             }
         
@@ -1585,9 +1593,16 @@ class BotIntegrationView(APIView):
 
     def _leaderboard(self, request):
         from django.core.paginator import Paginator
+        from django.db.models import Sum
+        
         page = int(request.data.get("page", 1))
         page_size = int(request.data.get("page_size", 10))
-        qs = User.objects.exclude(discord_id__isnull=True).exclude(discord_id="").order_by('-total_points')
+        
+        # Calculate total points earned from PointsLog (excluding redemptions)
+        qs = User.objects.exclude(discord_id__isnull=True).exclude(discord_id="").annotate(
+            total_points_earned=Sum('points_logs__points_earned', default=0)
+        ).exclude(total_points_earned=0).order_by('-total_points_earned')
+        
         paginator = Paginator(qs, page_size)
         page_obj = paginator.get_page(page)
         items = [
@@ -1595,7 +1610,7 @@ class BotIntegrationView(APIView):
                 "position": (page_obj.start_index() + idx),
                 "discord_id": u.discord_id,
                 "username": u.username,
-                "total_points": u.total_points,
+                "total_points": u.total_points_earned,  # Use points earned, not current balance
             }
             for idx, u in enumerate(page_obj.object_list)
         ]
