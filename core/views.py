@@ -22,6 +22,65 @@ from .serializers import (
     DiscordValidationSerializer, DiscordValidationResponseSerializer, UserPreferencesSerializer
 )
 
+def invalidate_user_caches(user_id):
+    """
+    Invalidate all cached data for a specific user when their points/activities change.
+    This ensures users see updated data immediately after activities are added.
+    
+    Args:
+        user_id: The ID of the user whose caches should be invalidated
+    """
+    try:
+        logger.info(f"🔥 CACHE INVALIDATION START for user {user_id}")
+        
+        # Count successful deletions for debugging
+        deleted_count = 0
+        
+        # Activity-related caches - these change most frequently
+        keys_to_delete = [
+            f"activity_feed_{user_id}_lifetime",
+            f"points_history_{user_id}_lifetime",
+            f"rewards_available_{user_id}",
+        ]
+        
+        # Dashboard stats caches - invalidate all periods
+        for period in ['7days', '30days', '90days']:
+            keys_to_delete.append(f"dashboard_stats_{user_id}_{period}")
+        
+        # Points timeline caches - invalidate common configurations
+        for granularity in ['daily', 'weekly', 'monthly']:
+            for days in [7, 30, 90, 365]:
+                keys_to_delete.append(f"points_timeline_{user_id}_{granularity}_{days}")
+        
+        # Limited/paginated caches - invalidate common limits
+        common_limits = [10, 20, 50, 100, 500, 1000]
+        for limit in common_limits:
+            keys_to_delete.append(f"activity_feed_{user_id}_{limit}")
+            keys_to_delete.append(f"points_history_{user_id}_{limit}")
+        
+        # Leaderboard caches - invalidate for all periods and common limits
+        leaderboard_periods = ['all_time', 'weekly', 'monthly']
+        leaderboard_limits = [10, 20, 50, 100]
+        for period in leaderboard_periods:
+            for limit in leaderboard_limits:
+                keys_to_delete.append(f"leaderboard_{period}_{limit}_{user_id}")
+        
+        # Delete all keys and count successes
+        for key in keys_to_delete:
+            if cache.delete(key):
+                deleted_count += 1
+                logger.info(f"✅ Deleted cache key: {key}")
+            else:
+                logger.info(f"⚪ Cache key not found (already expired): {key}")
+        
+        logger.info(f"🎉 CACHE INVALIDATION COMPLETED for user {user_id} - Deleted {deleted_count}/{len(keys_to_delete)} keys")
+        
+    except Exception as e:
+        logger.error(f"❌ CACHE INVALIDATION FAILED for user {user_id}: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        # Don't re-raise the exception to avoid breaking the main flow
+
 class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all()
     serializer_class = UserSerializer
@@ -90,11 +149,37 @@ class UserViewSet(viewsets.ModelViewSet):
             })
         return Response({'error': 'Invalid credentials'}, status=status.HTTP_401_UNAUTHORIZED)
     
-    @action(detail=False, methods=['get'])
+    @action(detail=False, methods=['get', 'put'])
     def profile(self, request):
-        """Get current user profile"""
-        serializer = self.get_serializer(request.user)
-        return Response(serializer.data)
+        """Get or update current user profile"""
+        if request.method == 'GET':
+            serializer = self.get_serializer(request.user)
+            return Response(serializer.data)
+        
+        elif request.method == 'PUT':
+            # Update user profile
+            user = request.user
+            serializer = self.get_serializer(user, data=request.data, partial=True)
+            
+            if serializer.is_valid():
+                # Update media consent tracking if consent is being updated
+                if 'media_consent' in request.data and request.data['media_consent'] != user.media_consent:
+                    serializer.validated_data['media_consent_date'] = timezone.now()
+                    serializer.validated_data['media_consent_ip'] = request.META.get('REMOTE_ADDR')
+                    serializer.validated_data['media_consent_user_agent'] = request.META.get('HTTP_USER_AGENT', '')
+                
+                serializer.save()
+                return Response({
+                    'success': True,
+                    'message': 'Profile updated successfully',
+                    'data': serializer.data
+                })
+            
+            return Response({
+                'success': False,
+                'message': 'Profile update failed',
+                'errors': serializer.errors
+            }, status=status.HTTP_400_BAD_REQUEST)
     
     @action(detail=False, methods=['post'])
     def consent(self, request):
@@ -129,6 +214,68 @@ class UserViewSet(viewsets.ModelViewSet):
             return Response({
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=False, methods=['post'])
+    def change_password(self, request):
+        """Change user password with Discord verification"""
+        try:
+            user = request.user
+            current_password = request.data.get('current_password')
+            new_password = request.data.get('new_password')
+            discord_id = request.data.get('discord_id')
+            
+            # Validate required fields
+            if not current_password or not new_password:
+                return Response({
+                    'error': 'Both current_password and new_password are required'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Verify current password
+            if not user.check_password(current_password):
+                return Response({
+                    'error': 'Current password is incorrect'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # For Discord-linked accounts, verify Discord ID
+            if user.discord_id and user.discord_verified:
+                if not discord_id or discord_id != user.discord_id:
+                    return Response({
+                        'error': 'Discord ID verification required for password change'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Validate new password (basic validation)
+            if len(new_password) < 8:
+                return Response({
+                    'error': 'New password must be at least 8 characters long'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Update password
+            user.set_password(new_password)
+            user.save()
+            
+            return Response({
+                'success': True,
+                'message': 'Password changed successfully'
+            })
+            
+        except Exception as e:
+            return Response({
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=False, methods=['get'])
+    def discord_verification(self, request):
+        """Get Discord verification status"""
+        user = request.user
+        
+        return Response({
+            'discord_linked': bool(user.discord_id and user.discord_verified),
+            'discord_id': user.discord_id if user.discord_verified else None,
+            'discord_username': user.discord_username_unverified if not user.discord_verified else None,
+            'discord_verified': user.discord_verified,
+            'discord_verified_at': user.discord_verified_at.isoformat() if user.discord_verified_at else None,
+            'verification_required': bool(user.discord_username_unverified and not user.discord_verified)
+        })
     
     @action(detail=False, methods=['post'])
     def complete_onboarding(self, request):
@@ -178,10 +325,14 @@ class UserViewSet(viewsets.ModelViewSet):
                 user.total_points += activity.points_value
                 user.save()
                 
-                # Update user status last activity
-                user_status, created = UserStatus.objects.get_or_create(user=user)
-                user_status.last_activity = timezone.now()
-                user_status.save()
+            # Update user status last activity
+            user_status, created = UserStatus.objects.get_or_create(user=user)
+            user_status.last_activity = timezone.now()
+            user_status.save()
+        
+            # CACHE INVALIDATION: Clear user's cached data after transaction commits
+            # This ensures immediate updates in the frontend
+            invalidate_user_caches(user.id)
             
             return Response({
                 'message': f'Added {activity.points_value} points for {activity.name}',
@@ -266,8 +417,9 @@ class PointsLogViewSet(viewsets.ReadOnlyModelViewSet):
             'limit_applied': limit
         }
         
-        # CACHE: Store results for 5 minutes (300 seconds)
-        cache.set(cache_key, response_data, 300)
+        # CACHE: Store results for 24 hours (86400 seconds) - Points history with cache invalidation
+        # Long TTL since cache invalidation handles real-time updates
+        cache.set(cache_key, response_data, 86400)
         
         return Response(response_data)
 
@@ -339,6 +491,10 @@ class RedemptionViewSet(viewsets.ModelViewSet):
         redemption.admin_notes = request.data.get('notes', '')
         redemption.save()
         
+        # CACHE INVALIDATION: Clear user's cached data after redemption status change
+        # This ensures immediate updates in the frontend
+        invalidate_user_caches(redemption.user.id)
+        
         return Response({'message': 'Redemption approved'})
     
     @action(detail=True, methods=['post'])
@@ -360,6 +516,10 @@ class RedemptionViewSet(viewsets.ModelViewSet):
             redemption.processed_at = timezone.now()
             redemption.admin_notes = request.data.get('notes', '')
             redemption.save()
+        
+        # CACHE INVALIDATION: Clear user's cached data after points refund
+        # This ensures immediate updates in the frontend
+        invalidate_user_caches(redemption.user.id)
         
         return Response({'message': 'Redemption rejected and points refunded'})
 
@@ -718,8 +878,9 @@ class DashboardStatsView(APIView):
             }
         }
         
-        # CACHE: Store results for 10 minutes (600 seconds) - Dashboard stats change less frequently
-        cache.set(cache_key, response_data, 600)
+        # CACHE: Store results for 24 hours (86400 seconds) - Dashboard stats with cache invalidation
+        # Long TTL since cache invalidation handles real-time updates
+        cache.set(cache_key, response_data, 86400)
         
         return Response(response_data)
 
@@ -906,8 +1067,9 @@ class PointsTimelineView(APIView):
             }
         }
         
-        # CACHE: Store results for 10 minutes (600 seconds)
-        cache.set(cache_key, response_data, 600)
+        # CACHE: Store results for 24 hours (86400 seconds) - Timeline data with cache invalidation
+        # Long TTL since cache invalidation handles real-time updates
+        cache.set(cache_key, response_data, 86400)
         
         return Response(response_data)
 
@@ -917,12 +1079,18 @@ class LeaderboardView(APIView):
     permission_classes = [permissions.IsAuthenticated]
     
     def get(self, request):
-        """Get ranked list of users by points"""
+        """Get ranked list of users by points - CACHED"""
         from datetime import datetime, timedelta
         from django.db.models import Sum, Q
         
         limit = int(request.GET.get('limit', 10))
         period = request.GET.get('period', 'all_time')
+        
+        # CACHE: Check for cached leaderboard data first
+        cache_key = f"leaderboard_{period}_{limit}_{request.user.id}"
+        cached_data = cache.get(cache_key)
+        if cached_data:
+            return Response(cached_data)
         
         # Base queryset - exclude users without points and ensure they have proper usernames
         # Calculate total points earned from PointsLog (excluding redemptions)
@@ -1014,11 +1182,17 @@ class LeaderboardView(APIView):
         
         total_participants = users_with_monthly_points.count()
         
-        return Response({
+        response_data = {
             'leaderboard': leaderboard,
             'current_user_rank': current_user_rank,
             'total_participants': total_participants
-        })
+        }
+        
+        # CACHE: Store results for 12 hours (43200 seconds) - Leaderboard with cache invalidation
+        # Moderate TTL since leaderboard affects multiple users and changes less frequently
+        cache.set(cache_key, response_data, 43200)
+        
+        return Response(response_data)
 
 
 class RewardsAvailableView(APIView):
@@ -1058,8 +1232,9 @@ class RewardsAvailableView(APIView):
             'rewards': rewards_data
         }
         
-        # CACHE: Store results for 5 minutes (300 seconds) - Rewards change occasionally
-        cache.set(cache_key, response_data, 300)
+        # CACHE: Store results for 24 hours (86400 seconds) - Rewards change infrequently
+        # Long TTL since rewards are mostly static, admin changes are rare
+        cache.set(cache_key, response_data, 86400)
         
         return Response(response_data)
 
@@ -1136,6 +1311,10 @@ class RedeemRewardView(APIView):
             # Reduce stock
             reward.stock_available -= 1
             reward.save()
+        
+        # CACHE INVALIDATION: Clear user's cached data after transaction commits
+        # This ensures immediate updates in the frontend
+        invalidate_user_caches(user.id)
         
         return Response({
             'success': True,
@@ -1280,8 +1459,9 @@ class UnifiedActivityFeedView(APIView):
             'total_redemptions': len([item for item in feed_items if item['type'] == 'redemption'])
         }
         
-        # CACHE: Store results for 5 minutes (300 seconds) - Activity feed changes frequently
-        cache.set(cache_key, response_data, 300)
+        # CACHE: Store results for 24 hours (86400 seconds) - Activity feed with cache invalidation
+        # Long TTL since cache invalidation handles real-time updates
+        cache.set(cache_key, response_data, 86400)
         
         return Response(response_data)
 
@@ -1489,6 +1669,12 @@ class BotIntegrationView(APIView):
 
         # Check for unlocks after commit
         _check_and_record_unlocks(user)
+
+        # CACHE INVALIDATION: Clear user's cached data after transaction commits
+        # This ensures immediate updates in the frontend
+        logger.info(f"🚀 About to invalidate caches for user {user.id} after adding activity")
+        invalidate_user_caches(user.id)
+        logger.info(f"🎯 Cache invalidation call completed for user {user.id}")
 
         return Response({
             "message": f"Added {activity.points_value} points for {activity.name}",
