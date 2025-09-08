@@ -106,13 +106,14 @@ DATABASES['default']['OPTIONS'] = {
 }
 
 # Cache Configuration - CRITICAL for performance
+# Optimized for 1000 users with long TTLs and cache invalidation
 CACHES = {
     'default': {
         'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
         'LOCATION': 'unique-snowflake',
-        'TIMEOUT': 300,  # 5 minutes default
+        'TIMEOUT': 86400,  # 24 hours default - cache invalidation handles updates
         'OPTIONS': {
-            'MAX_ENTRIES': 1000,
+            'MAX_ENTRIES': 10000,  # Increased for 1000 users with multiple cache keys each
         }
     }
 }
