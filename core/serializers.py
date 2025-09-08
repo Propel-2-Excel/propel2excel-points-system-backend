@@ -8,8 +8,8 @@ class UserSerializer(serializers.ModelSerializer):
         model = User
         fields = [
             'id', 'username', 'email', 'first_name', 'last_name',
-            'role', 'company', 'university', 'discord_id',
-            'total_points', 'created_at', 'updated_at', 'password',
+            'role', 'company', 'university', 'major', 'graduation_year', 'display_name',
+            'discord_id', 'total_points', 'created_at', 'updated_at', 'password',
             
             # Discord verification fields
             'discord_username_unverified', 'discord_verified', 'discord_verified_at',

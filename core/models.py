@@ -14,6 +14,9 @@ class User(AbstractUser):
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='student')
     company = models.CharField(max_length=100, blank=True, null=True)
     university = models.CharField(max_length=100, blank=True, null=True)
+    major = models.CharField(max_length=100, blank=True, null=True, help_text="User's major/field of study")
+    graduation_year = models.IntegerField(blank=True, null=True, help_text="Expected graduation year")
+    display_name = models.CharField(max_length=100, blank=True, null=True, help_text="Display name for UI (defaults to username if not set)")
     discord_id = models.CharField(max_length=50, blank=True, null=True)
     
     # Discord verification fields
@@ -119,6 +122,7 @@ class PointsLog(models.Model):
     activity = models.ForeignKey(Activity, on_delete=models.CASCADE)
     points_earned = models.IntegerField()
     details = models.TextField(blank=True)
+
     timestamp = models.DateTimeField(default=timezone.now)
     
     class Meta:

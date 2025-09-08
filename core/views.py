@@ -90,11 +90,37 @@ class UserViewSet(viewsets.ModelViewSet):
             })
         return Response({'error': 'Invalid credentials'}, status=status.HTTP_401_UNAUTHORIZED)
     
-    @action(detail=False, methods=['get'])
+    @action(detail=False, methods=['get', 'put'])
     def profile(self, request):
-        """Get current user profile"""
-        serializer = self.get_serializer(request.user)
-        return Response(serializer.data)
+        """Get or update current user profile"""
+        if request.method == 'GET':
+            serializer = self.get_serializer(request.user)
+            return Response(serializer.data)
+        
+        elif request.method == 'PUT':
+            # Update user profile
+            user = request.user
+            serializer = self.get_serializer(user, data=request.data, partial=True)
+            
+            if serializer.is_valid():
+                # Update media consent tracking if consent is being updated
+                if 'media_consent' in request.data and request.data['media_consent'] != user.media_consent:
+                    serializer.validated_data['media_consent_date'] = timezone.now()
+                    serializer.validated_data['media_consent_ip'] = request.META.get('REMOTE_ADDR')
+                    serializer.validated_data['media_consent_user_agent'] = request.META.get('HTTP_USER_AGENT', '')
+                
+                serializer.save()
+                return Response({
+                    'success': True,
+                    'message': 'Profile updated successfully',
+                    'data': serializer.data
+                })
+            
+            return Response({
+                'success': False,
+                'message': 'Profile update failed',
+                'errors': serializer.errors
+            }, status=status.HTTP_400_BAD_REQUEST)
     
     @action(detail=False, methods=['post'])
     def consent(self, request):
@@ -129,6 +155,68 @@ class UserViewSet(viewsets.ModelViewSet):
             return Response({
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=False, methods=['post'])
+    def change_password(self, request):
+        """Change user password with Discord verification"""
+        try:
+            user = request.user
+            current_password = request.data.get('current_password')
+            new_password = request.data.get('new_password')
+            discord_id = request.data.get('discord_id')
+            
+            # Validate required fields
+            if not current_password or not new_password:
+                return Response({
+                    'error': 'Both current_password and new_password are required'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Verify current password
+            if not user.check_password(current_password):
+                return Response({
+                    'error': 'Current password is incorrect'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # For Discord-linked accounts, verify Discord ID
+            if user.discord_id and user.discord_verified:
+                if not discord_id or discord_id != user.discord_id:
+                    return Response({
+                        'error': 'Discord ID verification required for password change'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Validate new password (basic validation)
+            if len(new_password) < 8:
+                return Response({
+                    'error': 'New password must be at least 8 characters long'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Update password
+            user.set_password(new_password)
+            user.save()
+            
+            return Response({
+                'success': True,
+                'message': 'Password changed successfully'
+            })
+            
+        except Exception as e:
+            return Response({
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=False, methods=['get'])
+    def discord_verification(self, request):
+        """Get Discord verification status"""
+        user = request.user
+        
+        return Response({
+            'discord_linked': bool(user.discord_id and user.discord_verified),
+            'discord_id': user.discord_id if user.discord_verified else None,
+            'discord_username': user.discord_username_unverified if not user.discord_verified else None,
+            'discord_verified': user.discord_verified,
+            'discord_verified_at': user.discord_verified_at.isoformat() if user.discord_verified_at else None,
+            'verification_required': bool(user.discord_username_unverified and not user.discord_verified)
+        })
     
     @action(detail=False, methods=['post'])
     def complete_onboarding(self, request):
