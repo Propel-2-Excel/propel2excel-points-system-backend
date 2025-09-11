@@ -1,4 +1,4 @@
-# Propel2Excel Points System 🚀
+# Career Gamification Points System 🚀
 
 A comprehensive career-focused platform that combines a sophisticated Discord bot, robust backend API, and professional resume review system to motivate and reward student achievement. Built with Django REST Framework and featuring real-time activity tracking, automated scheduling, and interactive rewards.
 
