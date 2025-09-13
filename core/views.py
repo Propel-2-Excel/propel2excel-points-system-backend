@@ -13,9 +13,9 @@ import logging
 import requests
 
 logger = logging.getLogger(__name__)
-from .models import User, Activity, PointsLog, Incentive, Redemption, UserStatus, UserIncentiveUnlock, DiscordLinkCode, Professional, ReviewRequest, ScheduledSession, ProfessionalAvailability, UserPreferences
+from .models import User, Track, Activity, PointsLog, Incentive, Redemption, UserStatus, UserIncentiveUnlock, DiscordLinkCode, Professional, ReviewRequest, ScheduledSession, ProfessionalAvailability, UserPreferences
 from .serializers import (
-    UserSerializer, ActivitySerializer, PointsLogSerializer,
+    UserSerializer, TrackSerializer, ActivitySerializer, PointsLogSerializer,
     IncentiveSerializer, RedemptionSerializer, UserStatusSerializer, DiscordLinkCodeSerializer,
     ProfessionalSerializer, ReviewRequestSerializer, ReviewRequestCreateSerializer,
     ScheduledSessionSerializer, ProfessionalAvailabilitySerializer,
@@ -80,6 +80,19 @@ def invalidate_user_caches(user_id):
         import traceback
         logger.error(f"Traceback: {traceback.format_exc()}")
         # Don't re-raise the exception to avoid breaking the main flow
+
+class TrackViewSet(viewsets.ReadOnlyModelViewSet):
+    """ViewSet for managing career tracks"""
+    queryset = Track.objects.filter(is_active=True)
+    serializer_class = TrackSerializer
+    permission_classes = [permissions.AllowAny]  # Allow anyone to view tracks
+    
+    @action(detail=False, methods=['get'])
+    def active(self, request):
+        """Get all active tracks"""
+        tracks = self.get_queryset()
+        serializer = self.get_serializer(tracks, many=True)
+        return Response(serializer.data)
 
 class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all()
@@ -342,6 +355,40 @@ class UserViewSet(viewsets.ModelViewSet):
             
         except Activity.DoesNotExist:
             return Response({'error': 'Activity not found'}, status=status.HTTP_404_NOT_FOUND)
+    
+    @action(detail=True, methods=['patch'])
+    def update_track(self, request, pk=None):
+        """Update a user's career track"""
+        user = self.get_object()
+        
+        # Users can only update their own track, or admins can update any
+        if user != request.user and request.user.role != 'admin':
+            return Response({'error': 'Permission denied'}, status=status.HTTP_403_FORBIDDEN)
+        
+        track_id = request.data.get('track_id')
+        if track_id is None:
+            return Response({'error': 'track_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            if track_id == '' or track_id is None:
+                # Remove track
+                user.track = None
+                user.save()
+                return Response({
+                    'message': 'Track removed successfully',
+                    'user': UserSerializer(user).data
+                })
+            else:
+                # Set track
+                track = Track.objects.get(id=track_id, is_active=True)
+                user.track = track
+                user.save()
+                return Response({
+                    'message': f'Track updated to {track.display_name}',
+                    'user': UserSerializer(user).data
+                })
+        except Track.DoesNotExist:
+            return Response({'error': 'Track not found'}, status=status.HTTP_404_NOT_FOUND)
 
 class ActivityViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = Activity.objects.filter(is_active=True)
@@ -423,15 +470,77 @@ class PointsLogViewSet(viewsets.ReadOnlyModelViewSet):
         
         return Response(response_data)
 
-class IncentiveViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = Incentive.objects.filter(is_active=True)
+class IncentiveViewSet(viewsets.ModelViewSet):
+    queryset = Incentive.objects.all()
     serializer_class = IncentiveSerializer
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        """Filter based on user role and action"""
+        if self.action == 'list' and not self.request.user.is_authenticated:
+            # Public access for listing - only show active incentives
+            return Incentive.objects.filter(is_active=True)
+        elif self.request.user.role == 'admin':
+            # Admins can see all incentives
+            return Incentive.objects.all()
+        else:
+            # Regular users can only see active incentives
+            return Incentive.objects.filter(is_active=True)
 
     def get_serializer_context(self):
         ctx = super().get_serializer_context()
         ctx['request'] = self.request
         return ctx
+
+    def perform_create(self, serializer):
+        """Only admins can create incentives"""
+        if self.request.user.role != 'admin':
+            raise permissions.PermissionDenied("Only admins can create incentives")
+        serializer.save()
+
+    def perform_update(self, serializer):
+        """Only admins can update incentives"""
+        if self.request.user.role != 'admin':
+            raise permissions.PermissionDenied("Only admins can update incentives")
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        """Only admins can delete incentives"""
+        if self.request.user.role != 'admin':
+            raise permissions.PermissionDenied("Only admins can delete incentives")
+        instance.delete()
+
+    @action(detail=True, methods=['post'])
+    def toggle_availability(self, request, pk=None):
+        """Toggle incentive availability (admin only)"""
+        if request.user.role != 'admin':
+            return Response({'error': 'Admin access required'}, status=status.HTTP_403_FORBIDDEN)
+        
+        incentive = self.get_object()
+        incentive.is_active = not incentive.is_active
+        incentive.save()
+        
+        # Clear cache for all users since rewards changed
+        from django.core.cache import cache
+        cache.delete_many(cache.keys('rewards_available_*'))
+        
+        return Response({
+            'success': True,
+            'incentive_id': incentive.id,
+            'name': incentive.name,
+            'is_active': incentive.is_active,
+            'message': f'Incentive "{incentive.name}" is now {"available" if incentive.is_active else "unavailable"}'
+        })
+
+    @action(detail=False, methods=['get'])
+    def admin_list(self, request):
+        """Get all incentives for admin management"""
+        if request.user.role != 'admin':
+            return Response({'error': 'Admin access required'}, status=status.HTTP_403_FORBIDDEN)
+        
+        incentives = Incentive.objects.all().order_by('points_required')
+        serializer = self.get_serializer(incentives, many=True)
+        return Response(serializer.data)
 
 class RedemptionViewSet(viewsets.ModelViewSet):
     serializer_class = RedemptionSerializer
@@ -1209,13 +1318,14 @@ class RewardsAvailableView(APIView):
         if cached_data:
             return Response(cached_data)
         
-        rewards = Incentive.objects.filter(is_active=True).order_by('points_required')
+        # Get ALL rewards, not just active ones
+        rewards = Incentive.objects.all().order_by('points_required')
         
         rewards_data = []
         for reward in rewards:
             can_redeem = (user.total_points >= reward.points_required and 
+                         reward.is_active and 
                          reward.stock_available > 0)
-            
             rewards_data.append({
                 'id': reward.id,
                 'name': reward.name,
@@ -1225,6 +1335,7 @@ class RewardsAvailableView(APIView):
                 'category': reward.category,
                 'stock_available': reward.stock_available,
                 'can_redeem': can_redeem,
+                'is_active': reward.is_active,  # Add this field for frontend
                 'sponsor': reward.sponsor
             })
         
@@ -1237,6 +1348,87 @@ class RewardsAvailableView(APIView):
         cache.set(cache_key, response_data, 86400)
         
         return Response(response_data)
+
+
+class ClearRewardsCacheView(APIView):
+    """Clear rewards cache for all users"""
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def post(self, request):
+        """Clear all rewards cache entries"""
+        try:
+            from django.core.cache import cache
+            
+            # Clear all cache keys that start with 'rewards_available_'
+            cache.clear()
+            
+            return Response({
+                'success': True,
+                'message': 'Rewards cache cleared successfully'
+            })
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class ClearUserCachesView(APIView):
+    """Clear all caches for a specific user"""
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def post(self, request):
+        """Clear all caches that could be affected by user data changes"""
+        try:
+            from django.core.cache import cache
+            from django.contrib.auth import get_user_model
+            import json
+            
+            User = get_user_model()
+            
+            # Handle both DRF request.data and raw request body
+            if hasattr(request, 'data'):
+                user_id = request.data.get('user_id')
+            else:
+                body = json.loads(request.body.decode('utf-8'))
+                user_id = body.get('user_id')
+            
+            if not user_id:
+                return Response({
+                    'success': False,
+                    'error': 'user_id is required'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            try:
+                user = User.objects.get(id=user_id)
+            except User.DoesNotExist:
+                return Response({
+                    'success': False,
+                    'error': 'User not found'
+                }, status=status.HTTP_404_NOT_FOUND)
+            
+            # Clear all cache types that could be affected by user changes
+            cache_patterns = [
+                f"dashboard_stats_{user_id}_*",
+                f"points_timeline_{user_id}_*", 
+                f"leaderboard_*_{user_id}",
+                f"activity_feed_{user_id}_*",
+                f"rewards_available_{user_id}"
+            ]
+            
+            # Since Django cache doesn't support pattern deletion easily, clear all cache
+            # This is the most reliable approach for ensuring all user caches are cleared
+            cache.clear()
+            
+            return Response({
+                'success': True,
+                'message': f'All caches cleared for user {user_id}'
+            })
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e)
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class RedeemRewardView(APIView):

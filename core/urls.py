@@ -2,11 +2,11 @@ from django.urls import path, include
 from .views import (
     BotIntegrationView, LinkView, FormSubmissionView, ProfessionalAvailabilityFormView, DiscordValidationView,
     DashboardStatsView, PointsTimelineView, LeaderboardView, RewardsAvailableView, RedeemRewardView, RedemptionHistoryView,
-    UnifiedActivityFeedView, health_check
+    UnifiedActivityFeedView, ClearRewardsCacheView, ClearUserCachesView, health_check
 )
 from rest_framework.routers import DefaultRouter
 from .views import (
-    UserViewSet, ActivityViewSet, PointsLogViewSet,
+    UserViewSet, TrackViewSet, ActivityViewSet, PointsLogViewSet,
     IncentiveViewSet, RedemptionViewSet, UserStatusViewSet,
     ProfessionalViewSet, ReviewRequestViewSet, ScheduledSessionViewSet, ProfessionalAvailabilityViewSet,
     UserPreferencesViewSet
@@ -14,6 +14,7 @@ from .views import (
 
 router = DefaultRouter()
 router.register(r'users', UserViewSet)
+router.register(r'tracks', TrackViewSet)
 router.register(r'activities', ActivityViewSet)
 router.register(r'points-logs', PointsLogViewSet, basename='pointslog')
 router.register(r'incentives', IncentiveViewSet)
@@ -37,6 +38,8 @@ urlpatterns = [
     path('api/leaderboard/', LeaderboardView.as_view(), name='leaderboard'),
     path('api/rewards/available/', RewardsAvailableView.as_view(), name='rewards-available'),
     path('api/rewards/redeem/', RedeemRewardView.as_view(), name='redeem-reward'),
+    path('api/rewards/clear_cache/', ClearRewardsCacheView.as_view(), name='clear-rewards-cache'),
+    path('api/cache/clear_user/', ClearUserCachesView.as_view(), name='clear-user-caches'),
     path('api/redemptions/history/', RedemptionHistoryView.as_view(), name='redemption-history'),
     path('api/activity/feed/', UnifiedActivityFeedView.as_view(), name='unified-activity-feed'),
     
