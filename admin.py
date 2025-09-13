@@ -38,6 +38,181 @@ class Admin(commands.Cog):
         except Exception as e:
             return False, str(e)
 
+    async def clear_user_caches(self, user_id):
+        """Clear all caches that could be affected by user point changes"""
+        try:
+            from bot import BACKEND_API_URL, BOT_SHARED_SECRET
+            async with aiohttp.ClientSession() as session:
+                # Clear all user-specific caches
+                async with session.post(
+                    f"{BACKEND_API_URL}/api/cache/clear_user/",
+                    json={"user_id": user_id},
+                    headers={"Authorization": f"Bearer {BOT_SHARED_SECRET}"},
+                ) as resp:
+                    pass  # Don't fail if cache clear fails
+        except Exception:
+            pass  # Don't fail the main command if cache clearing fails
+
+    def find_reward_matches(self, rewards, search_term):
+        """Smart reward matching with conflict detection"""
+        search_lower = search_term.lower()
+        
+        # First try exact matches
+        exact_matches = [r for r in rewards if r.get('name', '').lower() == search_lower]
+        if exact_matches:
+            return exact_matches, "exact"
+        
+        # Then try partial matches
+        partial_matches = [r for r in rewards if search_lower in r.get('name', '').lower()]
+        if partial_matches:
+            return partial_matches, "partial"
+        
+        return [], "none"
+
+    def get_unique_words(self, matches):
+        """Get unique words that could help differentiate between matches"""
+        all_words = []
+        for match in matches:
+            words = match.get('name', '').lower().split()
+            all_words.extend(words)
+        
+        # Find words that appear in only one match
+        unique_words = []
+        for word in set(all_words):
+            count = sum(1 for match in matches if word in match.get('name', '').lower())
+            if count == 1:
+                unique_words.append(word)
+        
+        return ", ".join(unique_words[:3]) if unique_words else "template, review, coaching"
+
+    async def handle_reward_command(self, ctx, reward_name, action, action_past_tense):
+        """Handle reward enable/disable commands with stock management"""
+        try:
+            from bot import BACKEND_API_URL, BOT_SHARED_SECRET
+            async with aiohttp.ClientSession() as session:
+                # First find the reward by name
+                async with session.get(
+                    f"{BACKEND_API_URL}/api/incentives/admin_list/",
+                    headers={"Authorization": f"Bearer {BOT_SHARED_SECRET}"},
+                ) as resp:
+                    if resp.status != 200:
+                        await ctx.send("❌ Failed to fetch rewards.")
+                        return
+                    rewards = await resp.json()
+                
+                # Smart matching
+                matches, match_type = self.find_reward_matches(rewards, reward_name)
+                
+                if not matches:
+                    # No matches found - show suggestions
+                    embed = discord.Embed(
+                        title="❌ Reward Not Found",
+                        description=f"No rewards found matching: `{reward_name}`",
+                        color=0xff0000
+                    )
+                    
+                    # Show similar rewards
+                    similar = []
+                    for r in rewards:
+                        name_lower = r.get('name', '').lower()
+                        if any(word in name_lower for word in reward_name.lower().split()):
+                            similar.append(r)
+                    
+                    if similar:
+                        embed.add_field(
+                            name="💡 Did you mean?",
+                            value="\n".join([f"• {r.get('name')}" for r in similar[:5]]),
+                            inline=False
+                        )
+                    
+                    embed.add_field(
+                        name="💡 Tip",
+                        value="Use `!rewards` to see all available rewards",
+                        inline=False
+                    )
+                    await ctx.send(embed=embed)
+                    return
+                
+                if len(matches) > 1:
+                    # Multiple matches found - show them to admin
+                    embed = discord.Embed(
+                        title="🔍 Multiple Rewards Found",
+                        description=f"Found {len(matches)} rewards matching `{reward_name}`:",
+                        color=0xffaa00
+                    )
+                    
+                    for i, match in enumerate(matches, 1):
+                        stock_status = "In Stock" if match.get('stock_available', 0) > 0 else "Out of Stock"
+                        embed.add_field(
+                            name=f"{i}. {stock_status} {match.get('name')}",
+                            value=f"ID: {match.get('id')} | {match.get('points_required')} pts | Stock: {match.get('stock_available')}",
+                            inline=False
+                        )
+                    
+                    embed.add_field(
+                        name="💡 How to Fix",
+                        value=f"Be more specific with the reward name:\n"
+                              f"• Use the full name: `{matches[0].get('name')}`\n"
+                              f"• Use unique words: `{self.get_unique_words(matches)}`\n"
+                              f"• Use quotes for exact match: `\"{reward_name}\"`",
+                        inline=False
+                    )
+                    await ctx.send(embed=embed)
+                    return
+                
+                # Single match found - proceed
+                reward = matches[0]
+                current_stock = reward.get('stock_available', 0)
+                
+                # Check current status
+                if action == "enable" and current_stock > 0:
+                    await ctx.send(f"✅ {reward.get('name')} is already in stock!")
+                    return
+                elif action == "disable" and current_stock == 0:
+                    await ctx.send(f"❌ {reward.get('name')} is already out of stock!")
+                    return
+                
+                # Perform the action using stock management
+                new_stock = 10 if action == "enable" else 0  # Default stock when enabling
+                
+                async with session.patch(
+                    f"{BACKEND_API_URL}/api/incentives/{reward.get('id')}/",
+                    json={"stock_available": new_stock},
+                    headers={"Authorization": f"Bearer {BOT_SHARED_SECRET}"},
+                ) as resp:
+                    if resp.status != 200:
+                        text = await resp.text()
+                        await ctx.send(f"❌ Failed to {action} reward: {text[:200]}")
+                        return
+                    data = await resp.json()
+                
+                # Clear cache after stock update
+                async with session.post(
+                    f"{BACKEND_API_URL}/api/incentives/clear_cache/",
+                    headers={"Authorization": f"Bearer {BOT_SHARED_SECRET}"},
+                ) as cache_resp:
+                    pass  # Don't fail if cache clear fails
+                
+                # Success response
+                status_emoji = "✅" if new_stock > 0 else "❌"
+                status_text = "in stock" if new_stock > 0 else "out of stock"
+                color = 0x00ff00 if new_stock > 0 else 0xff0000
+                
+                embed = discord.Embed(
+                    title=f"{status_emoji} Reward {action_past_tense.title()}",
+                    description=f"**{data.get('name')}** is now {status_text}",
+                    color=color
+                )
+                embed.add_field(name="Points Required", value=f"{data.get('points_required')} pts", inline=True)
+                embed.add_field(name="Stock Available", value=f"{new_stock}", inline=True)
+                embed.add_field(name="Previous Stock", value=f"{current_stock}", inline=True)
+                embed.add_field(name="Match Type", value=match_type.title(), inline=True)
+                
+                await ctx.send(embed=embed)
+                
+        except Exception as e:
+            await ctx.send(f"❌ Error {action}ing reward: {str(e)}")
+
     @commands.command()
     @commands.has_permissions(administrator=True)
     async def addpoints(self, ctx, member: commands.MemberConverter, amount: int):
@@ -50,6 +225,9 @@ class Admin(commands.Cog):
                 color=0x00ff00
             )
             embed.add_field(name="New Total", value=f"{result} points", inline=True)
+            
+            # Clear all caches that could be affected by point changes
+            await self.clear_user_caches(str(member.id))
         else:
             embed = discord.Embed(
                 title="❌ Failed to Add Points",
@@ -57,7 +235,6 @@ class Admin(commands.Cog):
                 color=0xff0000
             )
             embed.add_field(name="Error", value=str(result), inline=False)
-        
         await ctx.send(embed=embed)
 
     @commands.command()
@@ -72,6 +249,9 @@ class Admin(commands.Cog):
                 color=0xff0000
             )
             embed.add_field(name="New Total", value=f"{result} points", inline=True)
+            
+            # Clear all caches that could be affected by point changes
+            await self.clear_user_caches(str(member.id))
         else:
             embed = discord.Embed(
                 title="❌ Failed to Remove Points",
@@ -79,7 +259,6 @@ class Admin(commands.Cog):
                 color=0xff0000
             )
             embed.add_field(name="Error", value=str(result), inline=False)
-        
         await ctx.send(embed=embed)
 
     @commands.command()
@@ -109,6 +288,10 @@ class Admin(commands.Cog):
                     if resp2.status != 200:
                         await ctx.send("❌ Failed to reset points.")
                         return
+                
+                # Clear all caches that could be affected by point changes
+                await self.clear_user_caches(str(member.id))
+                
         except Exception:
             await ctx.send("❌ Error resetting points.")
             return
@@ -329,6 +512,7 @@ class Admin(commands.Cog):
 
     @commands.command()
     @commands.has_permissions(administrator=True)
+<<<<<<< HEAD
     async def verifycourse(self, ctx, member: commands.MemberConverter, course_name: str, points: int, *, notes: str = ""):
         """Admin command to confirm certification/course completion"""
         try:
@@ -866,6 +1050,177 @@ class Admin(commands.Cog):
         except Exception as e:
             await ctx.send(f"❌ Error rejecting LinkedIn update: {e}")
             print(f"Error in rejectlinkedin command: {e}")
+
+    @commands.command()
+    @commands.has_permissions(administrator=True)
+    async def rewards(self, ctx):
+        """Show all rewards with their stock status and usage guide"""
+        try:
+            from bot import BACKEND_API_URL, BOT_SHARED_SECRET
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f"{BACKEND_API_URL}/api/incentives/admin_list/",
+                    headers={"Authorization": f"Bearer {BOT_SHARED_SECRET}"},
+                ) as resp:
+                    if resp.status != 200:
+                        await ctx.send("❌ Failed to fetch rewards.")
+                        return
+                    data = await resp.json()
+                    if not data:
+                        await ctx.send("No rewards found.")
+                        return
+        except Exception:
+            await ctx.send("❌ Error fetching rewards.")
+            return
+        
+        embed = discord.Embed(
+            title="🎁 Rewards Management",
+            description="All rewards and their stock status",
+            color=0x0099ff
+        )
+        
+        # Group rewards by stock status
+        in_stock_rewards = [r for r in data if r.get('stock_available', 0) > 0]
+        out_of_stock_rewards = [r for r in data if r.get('stock_available', 0) == 0]
+        
+        if in_stock_rewards:
+            embed.add_field(
+                name=f"✅ In Stock ({len(in_stock_rewards)})",
+                value="\n".join([f"• {r.get('name')} ({r.get('points_required')} pts) - Stock: {r.get('stock_available')}" for r in in_stock_rewards]),
+                inline=False
+            )
+        
+        if out_of_stock_rewards:
+            embed.add_field(
+                name=f"❌ Out of Stock ({len(out_of_stock_rewards)})",
+                value="\n".join([f"• {r.get('name')} ({r.get('points_required')} pts) - Stock: {r.get('stock_available')}" for r in out_of_stock_rewards]),
+                inline=False
+            )
+        
+        embed.add_field(
+            name="🔧 Commands",
+            value="`!enable_reward <name>` - Restock a reward (sets to 10)\n`!disable_reward <name>` - Make out of stock (sets to 0)\n`!set_stock <amount> <name>` - Set specific stock amount",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="💡 Naming Tips",
+            value="• Use full names for exact matches\n• Use unique words for partial matches\n• Use quotes for exact match: `\"Resume Review\"`\n• Examples: `resume`, `template`, `coaching`",
+            inline=False
+        )
+        
+        await ctx.send(embed=embed)
+
+    @commands.command()
+    @commands.has_permissions(administrator=True)
+    async def enable_reward(self, ctx, *, reward_name: str):
+        """Enable a reward (restock it)"""
+        await self.handle_reward_command(ctx, reward_name, "enable", "restocked")
+
+    @commands.command()
+    @commands.has_permissions(administrator=True)
+    async def disable_reward(self, ctx, *, reward_name: str):
+        """Disable a reward (make it out of stock)"""
+        await self.handle_reward_command(ctx, reward_name, "disable", "out of stock")
+
+    @commands.command()
+    @commands.has_permissions(administrator=True)
+    async def set_stock(self, ctx, amount: int, *, reward_name: str):
+        """Set stock amount for a reward"""
+        try:
+            from bot import BACKEND_API_URL, BOT_SHARED_SECRET
+            async with aiohttp.ClientSession() as session:
+                # First find the reward by name
+                async with session.get(
+                    f"{BACKEND_API_URL}/api/incentives/admin_list/",
+                    headers={"Authorization": f"Bearer {BOT_SHARED_SECRET}"},
+                ) as resp:
+                    if resp.status != 200:
+                        await ctx.send("❌ Failed to fetch rewards.")
+                        return
+                    rewards = await resp.json()
+                
+                # Smart matching
+                matches, match_type = self.find_reward_matches(rewards, reward_name)
+                
+                if not matches:
+                    # No matches found - show suggestions
+                    embed = discord.Embed(
+                        title="❌ Reward Not Found",
+                        description=f"No rewards found matching: `{reward_name}`",
+                        color=0xff0000
+                    )
+                    embed.add_field(
+                        name="💡 Tip",
+                        value="Use `!rewards` to see all available rewards",
+                        inline=False
+                    )
+                    await ctx.send(embed=embed)
+                    return
+                
+                if len(matches) > 1:
+                    # Multiple matches found - show them to admin
+                    embed = discord.Embed(
+                        title="🔍 Multiple Rewards Found",
+                        description=f"Found {len(matches)} rewards matching `{reward_name}`:",
+                        color=0xffaa00
+                    )
+                    
+                    for i, match in enumerate(matches, 1):
+                        stock_status = "In Stock" if match.get('stock_available', 0) > 0 else "Out of Stock"
+                        embed.add_field(
+                            name=f"{i}. {stock_status} {match.get('name')}",
+                            value=f"ID: {match.get('id')} | {match.get('points_required')} pts | Stock: {match.get('stock_available')}",
+                            inline=False
+                        )
+                    
+                    embed.add_field(
+                        name="💡 How to Fix",
+                        value=f"Be more specific with the reward name:\n"
+                              f"• Use the full name: `{matches[0].get('name')}`\n"
+                              f"• Use unique words: `{self.get_unique_words(matches)}`",
+                        inline=False
+                    )
+                    await ctx.send(embed=embed)
+                    return
+                
+                # Single match found - proceed
+                reward = matches[0]
+                old_stock = reward.get('stock_available', 0)
+                
+                # Update the stock
+                async with session.patch(
+                    f"{BACKEND_API_URL}/api/incentives/{reward.get('id')}/",
+                    json={"stock_available": amount},
+                    headers={"Authorization": f"Bearer {BOT_SHARED_SECRET}"},
+                ) as resp:
+                    if resp.status != 200:
+                        text = await resp.text()
+                        await ctx.send(f"❌ Failed to update stock: {text[:200]}")
+                        return
+                
+                # Clear cache after stock update
+                async with session.post(
+                    f"{BACKEND_API_URL}/api/incentives/clear_cache/",
+                    headers={"Authorization": f"Bearer {BOT_SHARED_SECRET}"},
+                ) as cache_resp:
+                    pass  # Don't fail if cache clear fails
+                
+                embed = discord.Embed(
+                    title="📦 Stock Updated",
+                    description=f"Updated stock for **{reward.get('name')}**",
+                    color=0x00ff00
+                )
+                embed.add_field(name="Reward", value=reward.get('name'), inline=True)
+                embed.add_field(name="New Stock", value=str(amount), inline=True)
+                embed.add_field(name="Previous Stock", value=str(old_stock), inline=True)
+                embed.add_field(name="Points Required", value=f"{reward.get('points_required')} pts", inline=True)
+                embed.add_field(name="Match Type", value=match_type.title(), inline=True)
+                
+                await ctx.send(embed=embed)
+                
+        except Exception as e:
+            await ctx.send(f"❌ Error updating stock: {str(e)}")
 
 async def setup(bot):
     await bot.add_cog(Admin(bot))

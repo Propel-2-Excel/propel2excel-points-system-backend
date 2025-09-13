@@ -223,6 +223,39 @@ class Points(commands.Cog):
             print(f"Error calling backend API: {e}")
             return None
 
+    async def call_backend_api_direct(self, user_id, activity_type, details):
+        """Call backend API directly with activity type"""
+        try:
+            from bot import BACKEND_API_URL, BOT_SHARED_SECRET
+            import aiohttp
+
+            payload = {
+                "action": "add-activity",
+                "discord_id": user_id,
+                "activity_type": activity_type,
+                "details": details,
+            }
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{BACKEND_API_URL}/api/bot/",
+                    json=payload,
+                    headers={
+                        "Content-Type": "application/json",
+                        "X-Bot-Secret": BOT_SHARED_SECRET,
+                    }
+                ) as response:
+                    if response.status == 200:
+                        return await response.json()
+                    else:
+                        error_text = await response.text()
+                        print(f"Backend API error: {response.status} - {error_text}")
+                        return None
+                    
+        except Exception as e:
+            print(f"Error calling backend API direct: {e}")
+            return None
+
     def get_next_milestone(self, current_points):
         """Get the next milestone the user can work towards"""
         milestones = [
@@ -507,7 +540,6 @@ class Points(commands.Cog):
             
             # Forward to admin channel for review
             await self.forward_to_admin_channel(ctx, "Event", "Event attendance claimed", "User claims to have attended an event and is requesting 15 points.")
-            
         except Exception as e:
             await ctx.send("❌ An error occurred while submitting your event attendance.")
             print(f"Error in event command: {e}")
@@ -515,13 +547,14 @@ class Points(commands.Cog):
     @commands.command()
     @commands.cooldown(1, 10, commands.BucketType.user)  # 1 use per 10 seconds per user
     async def resource(self, ctx, *, description):
-        """Submit a resource for admin review and potential points"""
+        """Share a resource for +10 points"""
         try:
             # Check if user provided a description
             if not description or len(description.strip()) < 10:
                 await ctx.send("❌ Please provide a detailed description of your resource (at least 10 characters).\n\n**Usage:** `!resource <description of the resource you want to share>`")
                 return
             
+<<<<<<< HEAD
             # Save resource submission to backend
             success = await self.submit_resource_to_backend(str(ctx.author.id), description)
             
@@ -568,7 +601,7 @@ class Points(commands.Cog):
             await self.forward_to_admin_channel(ctx, "Resource", description)
             
         except Exception as e:
-            await ctx.send("❌ An error occurred while submitting your resource. Please try again.")
+            await ctx.send("❌ An error occurred while processing your resource share.")
             print(f"Error in resource command: {e}")
 
     async def forward_to_admin_channel(self, ctx, submission_type, description="", additional_info=""):
@@ -735,7 +768,6 @@ class Points(commands.Cog):
             
             # Forward to admin channel for review
             await self.forward_to_admin_channel(ctx, "LinkedIn", "LinkedIn update posted", "User claims to have posted a LinkedIn update and is requesting 5 points.")
-            
         except Exception as e:
             await ctx.send("❌ An error occurred while submitting your LinkedIn update.")
             print(f"Error in linkedin command: {e}")
@@ -752,7 +784,7 @@ class Points(commands.Cog):
             )
             embed.add_field(name="📄 Resume Upload", value="+20 points", inline=True)
             embed.add_field(name="🎉 Event Attendance", value="+15 points", inline=True)
-            embed.add_field(name="📚 Resource Share", value="+10 points (after admin review)", inline=True)
+            embed.add_field(name="📚 Resource Share", value="+10 points", inline=True)
             embed.add_field(name="💼 LinkedIn Update", value="+5 points", inline=True)
             embed.add_field(name="👍 Liking/Interacting", value="+2 points", inline=True)
             embed.add_field(name="💬 Message Sent", value="+1 points", inline=True)
@@ -868,7 +900,7 @@ class Points(commands.Cog):
             
             embed.add_field(
                 name="📝 Description",
-                value=description[:500] + "..." if len(description) > 500 else description,
+                value="Resource description not available",
                 inline=False
             )
             
@@ -920,7 +952,7 @@ class Points(commands.Cog):
             
             embed.add_field(
                 name="📝 Description",
-                value=description[:500] + "..." if len(description) > 500 else description,
+                value="Resource description not available",
                 inline=False
             )
             

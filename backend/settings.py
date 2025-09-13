@@ -30,7 +30,7 @@ SECRET_KEY = env("SECRET_KEY")
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = env.bool("DEBUG", default=False)
 
-ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=["localhost", "127.0.0.1"])  # set to your domain in prod
+ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=["localhost", "127.0.0.1", "testserver"])  # set to your domain in prod
 
 
 # Application definition
@@ -105,6 +105,30 @@ DATABASES['default']['OPTIONS'] = {
     'sslmode': 'require',
 }
 
+# Cache Configuration - CRITICAL for performance
+# Optimized for 1000 users with long TTLs and cache invalidation
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        'LOCATION': 'unique-snowflake',
+        'TIMEOUT': 86400,  # 24 hours default - cache invalidation handles updates
+        'OPTIONS': {
+            'MAX_ENTRIES': 10000,  # Increased for 1000 users with multiple cache keys each
+        }
+    }
+}
+
+# For production, consider Redis:
+# CACHES = {
+#     'default': {
+#         'BACKEND': 'django_redis.cache.RedisCache',
+#         'LOCATION': env('REDIS_URL', default='redis://127.0.0.1:6379/1'),
+#         'OPTIONS': {
+#             'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+#         }
+#     }
+# }
+
 
 # Password validation
 # https://docs.djangoproject.com/en/4.2/ref/settings/#auth-password-validators
@@ -155,6 +179,7 @@ AUTH_USER_MODEL = 'core.User'
 CORS_ALLOWED_ORIGINS = env.list("CORS_ALLOWED_ORIGINS", default=[
     "http://localhost:3000",  # Local development
     "http://127.0.0.1:3000",
+    "https://propel2excel-student-dashboard.vercel.app",  # Vercel frontend
 ])
 
 # Allow credentials for JWT authentication
@@ -176,4 +201,8 @@ BOT_SHARED_SECRET = env("BOT_SHARED_SECRET", default="")
 
 # Shared secret for Google Form webhooks
 FORM_WEBHOOK_SECRET = env("FORM_WEBHOOK_SECRET", default="")
+
+# Discord API Integration
+DISCORD_TOKEN = env("DISCORD_TOKEN", default="")
+DISCORD_GUILD_ID = env("DISCORD_GUILD_ID", default="123456789012345678")  # Default placeholder for testing
 
