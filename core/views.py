@@ -13,7 +13,7 @@ import logging
 import requests
 
 logger = logging.getLogger(__name__)
-from .models import User, Track, Activity, PointsLog, Incentive, Redemption, UserStatus, UserIncentiveUnlock, DiscordLinkCode, Professional, ReviewRequest, ScheduledSession, ProfessionalAvailability, UserPreferences
+from .models import User, Track, Activity, PointsLog, Incentive, Redemption, UserStatus, UserIncentiveUnlock, DiscordLinkCode, Professional, ReviewRequest, ScheduledSession, ProfessionalAvailability, ResourceSubmission, UserPreferences
 from .serializers import (
     UserSerializer, TrackSerializer, ActivitySerializer, PointsLogSerializer,
     IncentiveSerializer, RedemptionSerializer, UserStatusSerializer, DiscordLinkCodeSerializer,
@@ -1719,6 +1719,10 @@ class BotIntegrationView(APIView):
       - { "action": "suspend-user", "discord_id": str, "duration_minutes": int }
       - { "action": "unsuspend-user", "discord_id": str }
       - { "action": "activitylog", "hours"?: int, "limit"?: int }
+      - { "action": "submit-resource", "discord_id": str, "description": str }
+      - { "action": "approve-resource", "discord_id": str, "points": int, "notes"?: str }
+      - { "action": "reject-resource", "discord_id": str, "reason"?: str }
+      - { "action": "pending-resources" }
     """
 
     permission_classes = [permissions.AllowAny]
@@ -1773,6 +1777,14 @@ class BotIntegrationView(APIView):
             return self._add_professional_availability(request)
         if action == "validate-discord-user":
             return self._validate_discord_user(request)
+        if action == "submit-resource":
+            return self._submit_resource(request)
+        if action == "approve-resource":
+            return self._approve_resource(request)
+        if action == "reject-resource":
+            return self._reject_resource(request)
+        if action == "pending-resources":
+            return self._pending_resources(request)
 
         return Response({"error": "Unknown action"}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -2559,6 +2571,147 @@ class BotIntegrationView(APIView):
                 "valid": False,
                 "message": validation_result['message']
             }, status=200)
+
+    def _submit_resource(self, request):
+        """Submit a resource for admin review"""
+        discord_id = request.data.get("discord_id")
+        description = request.data.get("description")
+        
+        if not discord_id or not description:
+            return Response({"error": "discord_id and description are required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        if len(description.strip()) < 10:
+            return Response({"error": "Description must be at least 10 characters"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(discord_id=str(discord_id))
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Create resource submission
+        submission = ResourceSubmission.objects.create(
+            user=user,
+            description=description.strip(),
+            status='pending'
+        )
+        
+        return Response({
+            "success": True,
+            "submission_id": submission.id,
+            "message": "Resource submitted for review"
+        }, status=status.HTTP_201_CREATED)
+
+    def _approve_resource(self, request):
+        """Approve a resource submission and award points"""
+        discord_id = request.data.get("discord_id")
+        points = request.data.get("points", 10)
+        notes = request.data.get("notes", "")
+        
+        if not discord_id:
+            return Response({"error": "discord_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(discord_id=str(discord_id))
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Find the most recent pending submission for this user
+        submission = ResourceSubmission.objects.filter(
+            user=user, 
+            status='pending'
+        ).order_by('-submitted_at').first()
+        
+        if not submission:
+            return Response({"error": "No pending resource submissions found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Update submission status
+        submission.status = 'approved'
+        submission.points_awarded = points
+        submission.admin_notes = notes
+        submission.reviewed_at = timezone.now()
+        submission.save()
+        
+        # Award points via admin adjustment
+        activity = Activity.objects.filter(activity_type='resource_share', is_active=True).first()
+        if not activity:
+            return Response({"error": "resource_share activity not configured"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+        with transaction.atomic():
+            PointsLog.objects.create(
+                user=user,
+                activity=activity,
+                points_earned=points,
+                details=f"Resource approved: {submission.description[:100]}",
+            )
+            user.total_points += points
+            user.save(update_fields=["total_points"])
+            status_row, _ = UserStatus.objects.get_or_create(user=user)
+            status_row.last_activity = timezone.now()
+            status_row.save(update_fields=["last_activity"])
+        
+        return Response({
+            "success": True,
+            "submission_id": submission.id,
+            "points_awarded": points,
+            "total_points": user.total_points,
+            "message": "Resource approved and points awarded"
+        })
+
+    def _reject_resource(self, request):
+        """Reject a resource submission"""
+        discord_id = request.data.get("discord_id")
+        reason = request.data.get("reason", "No reason provided")
+        
+        if not discord_id:
+            return Response({"error": "discord_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(discord_id=str(discord_id))
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Find the most recent pending submission for this user
+        submission = ResourceSubmission.objects.filter(
+            user=user, 
+            status='pending'
+        ).order_by('-submitted_at').first()
+        
+        if not submission:
+            return Response({"error": "No pending resource submissions found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Update submission status
+        submission.status = 'rejected'
+        submission.admin_notes = reason
+        submission.reviewed_at = timezone.now()
+        submission.save()
+        
+        return Response({
+            "success": True,
+            "submission_id": submission.id,
+            "message": "Resource rejected"
+        })
+
+    def _pending_resources(self, request):
+        """Get all pending resource submissions"""
+        pending_submissions = ResourceSubmission.objects.filter(
+            status='pending'
+        ).order_by('-submitted_at')
+        
+        submissions_data = []
+        for submission in pending_submissions:
+            submissions_data.append({
+                "id": submission.id,
+                "discord_id": submission.user.discord_id,
+                "username": submission.user.username,
+                "description": submission.description,
+                "submitted_at": submission.submitted_at.isoformat(),
+            })
+        
+        return Response({
+            "success": True,
+            "pending_count": pending_submissions.count(),
+            "submissions": submissions_data
+        })
 
 
 class LinkView(APIView):

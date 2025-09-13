@@ -428,6 +428,31 @@ class ProfessionalAvailability(models.Model):
     def __str__(self):
         return f"{self.professional.name} - {self.start_date} to {self.end_date}"
 
+class ResourceSubmission(models.Model):
+    """User-submitted resources for admin review and potential points"""
+    STATUS_CHOICES = [
+        ('pending', 'Pending Review'),
+        ('approved', 'Approved'),
+        ('rejected', 'Rejected'),
+    ]
+    
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='resource_submissions')
+    description = models.TextField()
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    points_awarded = models.IntegerField(default=0)
+    admin_notes = models.TextField(blank=True, null=True)
+    submitted_at = models.DateTimeField(auto_now_add=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    reviewed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='reviewed_resources')
+    
+    class Meta:
+        db_table = 'resource_submissions'
+        ordering = ['-submitted_at']
+    
+    def __str__(self):
+        return f"{self.user.username} - {self.description[:50]}... ({self.status})"
+
+
 class UserPreferences(models.Model):
     """User preferences for notifications and display settings"""
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='preferences')
@@ -447,6 +472,7 @@ class UserPreferences(models.Model):
     
     class Meta:
         db_table = 'user_preferences'
+        ordering = ['-updated_at']
     
     def __str__(self):
         return f"Preferences for {self.user.username}"

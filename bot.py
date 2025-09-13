@@ -543,44 +543,48 @@ async def help(ctx):
     """Show available commands"""
     try:
         embed = discord.Embed(
-            title="🤖 Bot Commands",
-            description="Available commands for the P2E Discord Bot",
+            title="🤖 Propel2Excel Bot Commands",
+            description="Complete list of all available commands",
             color=0x0099ff
         )
         
-        # Points commands
+        # User Commands
         embed.add_field(
-            name="💰 Points Commands",
-            value="`!points` - Check your points\n"
-                  "`!pointshistory` - View your point history\n"
-                  "`!pointvalues` - Show all ways to earn points\n"
-                  "`!resume` - Start professional resume review process\n"
-                  "`!event` - Claim points for event attendance\n"
-                  "`!resource` - Claim points for sharing resources\n"
-                  "`!linkedin` - Claim points for LinkedIn updates",
+            name="👤 User Commands",
+            value="`!points` - Check your current points and next milestone\n"
+                  "`!rank [user]` - Show user's rank and points\n"
+                  "`!milestones` - Show available incentives and progress\n"
+                  "`!pointshistory` - View your recent point-earning activities\n"
+                  "`!resource <description>` - Submit a resource for review",
             inline=False
         )
         
-        # Shop commands
+        # New User Commands
         embed.add_field(
-            name="🛍️ Shop Commands",
-            value="`!shop` - View available rewards\n"
-                  "`!redeem <id>` - Redeem a reward",
+            name="🆕 New User Commands",
+            value="`!streak` - Track engagement streaks (daily/weekly)\n"
+                  "`!levelup` - Show progress toward next tier/badge\n"
+                  "`!badge` - Display earned career/professional badges\n"
+                  "`!leaderboard [category]` - Show leaderboard by category\n"
+                  "  Categories: total, networking, learning, events, resume_reviews, resources",
             inline=False
         )
         
-        # Resume Review commands
+        # Resume Review Commands
         embed.add_field(
             name="📋 Resume Review Commands",
-            value="`!resume_review` - Alternative resume review command\n"
-                  "`!review_status` - Check your review status\n"
-                  "`!add_professional` - [Admin] Add professional reviewer\n"
-                  "`!match_review` - [Admin] Match student with professional",
+            value="`!resume` - Start resume review process\n"
+                  "`!review_status` - Check the status of your review request",
             inline=False
         )
         
-        # Admin commands
+        # Shop Commands
         embed.add_field(
+<<<<<<< HEAD
+            name="🛍️ Shop Commands",
+            value="`!shop` - View available incentives and rewards\n"
+                  "`!redeem <incentive_name>` - Redeem an incentive with your points",
+=======
             name="⚙️ Admin Commands",
             value="`!addpoints @user <amount>` - Add points\n"
                   "`!removepoints @user <amount>` - Remove points\n"
@@ -591,20 +595,87 @@ async def help(ctx):
                   "`!enable_reward <name>` - Restock a reward (sets to 10)\n"
                   "`!disable_reward <name>` - Make out of stock (sets to 0)\n"
                   "`!set_stock <amount> <name>` - Set specific stock amount",
+>>>>>>> origin/main
             inline=False
         )
         
-        # Utility commands
+        # Utility Commands
         embed.add_field(
             name="🔧 Utility Commands",
-            value="`!ping` - Test bot response\n"
-                  "`!test` - Test database connection\n"
-                  "`!status` - Show bot status\n"
+            value="`!link <discord_username>` - Link Discord account with website\n"
                   "`!help` - Show this help message",
             inline=False
         )
         
-        embed.set_footer(text="Use ! before each command. Example: !points")
+        # Admin Commands - Points Management
+        embed.add_field(
+            name="⚙️ Admin Commands - Points",
+            value="`!addpoints <member> <amount>` - Add points to a user\n"
+                  "`!removepoints <member> <amount>` - Remove points from a user\n"
+                  "`!resetpoints <member>` - Reset a user's points to zero\n"
+                  "`!stats` - Show bot statistics and activity\n"
+                  "`!topusers [limit]` - Show top users by points\n"
+                  "`!clearwarnings <member>` - Clear warnings for a user\n"
+                  "`!suspenduser <member> <duration_minutes>` - Suspend user\n"
+                  "`!unsuspenduser <member>` - Remove suspension from a user\n"
+                  "`!activitylog [hours]` - Show recent activity log",
+            inline=False
+        )
+        
+        # Admin Commands - User Management
+        embed.add_field(
+            name="👥 Admin Commands - Users",
+            value="`!sendwelcome <member>` - Manually send welcome DM\n"
+                  "`!registeruser <member>` - Manually register a user with backend",
+            inline=False
+        )
+        
+        # Admin Commands - Resource Management
+        embed.add_field(
+            name="📚 Admin Commands - Resources",
+            value="`!checkmilestones [user]` - Manually check milestones\n"
+                  "`!approveresource <user_id> <points> [notes]` - Approve resource\n"
+                  "`!rejectresource <user_id> [reason]` - Reject resource\n"
+                  "`!pendingresources` - Show all pending resource submissions\n"
+                  "`!approveevent <user> [notes]` - Approve event attendance\n"
+                  "`!rejectevent <user> [reason]` - Reject event attendance\n"
+                  "`!approvelinkedin <user> [notes]` - Approve LinkedIn update\n"
+                  "`!rejectlinkedin <user> [reason]` - Reject LinkedIn update",
+            inline=False
+        )
+        
+        # Admin Commands - Resume Review Management
+        embed.add_field(
+            name="📝 Admin Commands - Resume Reviews",
+            value="`!add_professional <name> <specialties>` - Add professional\n"
+                  "`!list_professionals` - List available professionals\n"
+                  "`!match_review <user> <professional_name>` - Match student\n"
+                  "`!review_stats` - Show resume review statistics\n"
+                  "`!pending_reviews` - Show pending review requests\n"
+                  "`!suggest_matches <user>` - Show professional matches\n"
+                  "`!schedule_session <user> <professional> <time>` - Schedule session",
+            inline=False
+        )
+        
+        # Admin Commands - New Features
+        embed.add_field(
+            name="🆕 New Admin Commands",
+            value="`!verifycourse <member> <course> <points> [notes]` - Verify course\n"
+                  "`!highlight [period]` - Highlight top contributors (week/month/all)\n"
+                  "`!audit [hours] [user]` - View logs of all point activities",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="📊 Command Summary",
+            value="**Total Commands:** 36 (15 User + 21 Admin)\n"
+                  "**Prefix:** Use `!` before each command\n"
+                  "**Admin Commands:** Require Administrator permissions\n"
+                  "**Example:** `!points`, `!leaderboard networking`, `!addpoints @user 100`",
+            inline=False
+        )
+        
+        embed.set_footer(text="Bot is online and ready to use! 🎉")
         
         await ctx.send(embed=embed)
         logger.info(f"Help command used by {ctx.author} in {ctx.guild.name}")
@@ -664,37 +735,6 @@ async def link(ctx, code: str = None):
                     await ctx.send(f"❌ Linking failed: {short}")
     except Exception as e:
         await ctx.send(f"❌ Linking error: {e}")
-
-
-@bot.command()
-async def leaderboard(ctx, page: int = 1):
-    """Show top users by points from backend, paginated."""
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                f"{BACKEND_API_URL}/api/bot/",
-                json={"action": "leaderboard", "page": page, "page_size": 10},
-                headers={"Content-Type": "application/json", "X-Bot-Secret": BOT_SHARED_SECRET},
-            ) as resp:
-                if resp.status != 200:
-                    await ctx.send("❌ Failed to fetch leaderboard.")
-                    return
-                data = await resp.json()
-                total_pages = data.get("total_pages", 1)
-                items = data.get("results", [])
-                msg = f"**🏆 Leaderboard (Page {data.get('page', 1)}/{total_pages})**\n"
-                for item in items:
-                    user_id = item.get("discord_id")
-                    points = item.get("total_points", 0)
-                    member = ctx.guild.get_member(int(user_id)) if user_id and user_id.isdigit() else None
-                    name = member.display_name if member else (item.get("username") or f"User {user_id}")
-                    msg += f"{item.get('position')}. {name}: {points} points\n"
-                if total_pages > 1:
-                    msg += "\nType `!leaderboard <page>` to view other pages."
-                await ctx.send(msg)
-    except Exception as e:
-        logger.error(f"Leaderboard error: {e}")
-        await ctx.send("❌ Error fetching leaderboard.")
 
 
 @bot.command()

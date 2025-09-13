@@ -18,10 +18,20 @@ class Shop(commands.Cog):
                     if not data:
                         await ctx.send("The shop is currently empty!")
                         return
-                    msg = "**Available Incentives:**\n"
+                    msg = "**🛍️ Available Incentives:**\n\n"
                     for item in data:
-                        msg += f"{item.get('id')}. {item.get('name')} — {item.get('points_required')} points\n"
-                    msg += "\nUse `!redeem <id>` to redeem an incentive."
+                        msg += f"**{item.get('id')}.** {item.get('name')} — **{item.get('points_required')} points**\n"
+                    msg += "\n**📋 How to Redeem:**\n"
+                    msg += "1️⃣ Use `!points` to check your current points\n"
+                    msg += "2️⃣ Use `!redeem <id>` where `<id>` is the **number** next to the item\n"
+                    msg += "3️⃣ **Examples:**\n"
+                    msg += "   • `!redeem 1` → Redeem Azure Certification\n"
+                    msg += "   • `!redeem 4` → Redeem P2E T-Shirt\n"
+                    msg += "   • `!redeem 8` → Redeem 1-on-1 Career Coaching Session\n\n"
+                    msg += "**💡 Important:**\n"
+                    msg += "• `<id>` = The **number** (1, 2, 3, etc.) shown next to each item\n"
+                    msg += "• Make sure you have enough points before redeeming!\n"
+                    msg += "• Our team will contact you after successful redemption"
                     await ctx.send(msg)
         except Exception:
             await ctx.send("❌ Error fetching shop items.")
