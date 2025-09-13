@@ -1,14 +1,23 @@
 from rest_framework import serializers
-from .models import User, Activity, PointsLog, Incentive, Redemption, UserStatus, UserIncentiveUnlock, DiscordLinkCode, Professional, ReviewRequest, ScheduledSession, ProfessionalAvailability, UserPreferences
+from .models import User, Track, Activity, PointsLog, Incentive, Redemption, UserStatus, UserIncentiveUnlock, DiscordLinkCode, Professional, ReviewRequest, ScheduledSession, ProfessionalAvailability, UserPreferences
+
+class TrackSerializer(serializers.ModelSerializer):
+    """Serializer for Track model"""
+    
+    class Meta:
+        model = Track
+        fields = ['id', 'name', 'display_name', 'description', 'is_active', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at']
 
 class UserSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, required=False)
+    track_info = TrackSerializer(source='track', read_only=True)
     
     class Meta:
         model = User
         fields = [
             'id', 'username', 'email', 'first_name', 'last_name',
-            'role', 'company', 'university', 'major', 'graduation_year', 'display_name',
+            'role', 'track', 'track_info', 'company', 'university', 'major', 'graduation_year', 'display_name',
             'discord_id', 'total_points', 'created_at', 'updated_at', 'password',
             
             # Discord verification fields
@@ -20,7 +29,8 @@ class UserSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             'id', 'total_points', 'created_at', 'updated_at', 'discord_verified', 'discord_verified_at',
-            'media_consent_date', 'media_consent_ip', 'media_consent_user_agent', 'onboarding_completed_date'
+            'media_consent_date', 'media_consent_ip', 'media_consent_user_agent', 'onboarding_completed_date',
+            'track_info'
         ]
     
     def create(self, validated_data):

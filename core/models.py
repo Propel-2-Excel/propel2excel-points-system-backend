@@ -2,6 +2,28 @@ from django.db import models
 from django.contrib.auth.models import AbstractUser
 from django.utils import timezone
 
+class Track(models.Model):
+    """Career tracks for students: Tech, Consulting, Finance"""
+    TRACK_CHOICES = [
+        ('tech', 'Tech'),
+        ('consulting', 'Consulting'),
+        ('finance', 'Finance'),
+    ]
+    
+    name = models.CharField(max_length=20, choices=TRACK_CHOICES, unique=True)
+    display_name = models.CharField(max_length=50, help_text="Display name for UI")
+    description = models.TextField(blank=True, help_text="Description of the track")
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'tracks'
+        ordering = ['name']
+    
+    def __str__(self):
+        return self.display_name
+
 class User(AbstractUser):
     """Extended user model with role-based access"""
     ROLE_CHOICES = [
@@ -12,6 +34,7 @@ class User(AbstractUser):
     ]
     
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='student')
+    track = models.ForeignKey(Track, on_delete=models.SET_NULL, null=True, blank=True, help_text="Career track for students")
     company = models.CharField(max_length=100, blank=True, null=True)
     university = models.CharField(max_length=100, blank=True, null=True)
     major = models.CharField(max_length=100, blank=True, null=True, help_text="User's major/field of study")
