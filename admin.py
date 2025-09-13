@@ -47,7 +47,7 @@ class Admin(commands.Cog):
                 async with session.post(
                     f"{BACKEND_API_URL}/api/cache/clear_user/",
                     json={"user_id": user_id},
-                    headers={"Authorization": f"Bearer {BOT_SHARED_SECRET}"},
+                    headers={"X-Bot-Secret": BOT_SHARED_SECRET},
                 ) as resp:
                     pass  # Don't fail if cache clear fails
         except Exception:
@@ -85,20 +85,25 @@ class Admin(commands.Cog):
         
         return ", ".join(unique_words[:3]) if unique_words else "template, review, coaching"
 
-    async def handle_reward_command(self, ctx, reward_name, action, action_past_tense):
+    async def handle_reward_command_bot_api(self, ctx, reward_name, action, action_past_tense):
         """Handle reward enable/disable commands with stock management"""
         try:
             from bot import BACKEND_API_URL, BOT_SHARED_SECRET
             async with aiohttp.ClientSession() as session:
-                # First find the reward by name
-                async with session.get(
-                    f"{BACKEND_API_URL}/api/incentives/admin_list/",
-                    headers={"Authorization": f"Bearer {BOT_SHARED_SECRET}"},
+                # First find the reward by name using bot API
+                async with session.post(
+                    f"{BACKEND_API_URL}/api/bot/",
+                    json={"action": "list-incentives"},
+                    headers={"Content-Type": "application/json", "X-Bot-Secret": BOT_SHARED_SECRET},
                 ) as resp:
                     if resp.status != 200:
                         await ctx.send("❌ Failed to fetch rewards.")
                         return
-                    rewards = await resp.json()
+                    data = await resp.json()
+                    if not data.get('success'):
+                        await ctx.send("❌ Failed to fetch rewards.")
+                        return
+                    rewards = data.get('incentives', [])
                 
                 # Smart matching
                 matches, match_type = self.find_reward_matches(rewards, reward_name)
@@ -175,23 +180,23 @@ class Admin(commands.Cog):
                 # Perform the action using stock management
                 new_stock = 10 if action == "enable" else 0  # Default stock when enabling
                 
-                async with session.patch(
-                    f"{BACKEND_API_URL}/api/incentives/{reward.get('id')}/",
-                    json={"stock_available": new_stock},
-                    headers={"Authorization": f"Bearer {BOT_SHARED_SECRET}"},
+                async with session.post(
+                    f"{BACKEND_API_URL}/api/bot/",
+                    json={
+                        "action": "update-incentive-stock",
+                        "incentive_id": reward.get('id'),
+                        "stock_count": new_stock
+                    },
+                    headers={"Content-Type": "application/json", "X-Bot-Secret": BOT_SHARED_SECRET},
                 ) as resp:
                     if resp.status != 200:
                         text = await resp.text()
                         await ctx.send(f"❌ Failed to {action} reward: {text[:200]}")
                         return
                     data = await resp.json()
-                
-                # Clear cache after stock update
-                async with session.post(
-                    f"{BACKEND_API_URL}/api/incentives/clear_cache/",
-                    headers={"Authorization": f"Bearer {BOT_SHARED_SECRET}"},
-                ) as cache_resp:
-                    pass  # Don't fail if cache clear fails
+                    if not data.get('success'):
+                        await ctx.send(f"❌ Failed to {action} reward: {data.get('error', 'Unknown error')}")
+                        return
                 
                 # Success response
                 status_emoji = "✅" if new_stock > 0 else "❌"
@@ -432,6 +437,9 @@ class Admin(commands.Cog):
             await ctx.send("❌ Error suspending user.")
             return
         
+        from datetime import datetime, timedelta
+        suspension_end = datetime.now() + timedelta(minutes=duration_minutes)
+        
         embed = discord.Embed(
             title="⏸️ User Suspended",
             description=f"{member.mention} is suspended from earning points for {duration_minutes} minutes",
@@ -512,7 +520,6 @@ class Admin(commands.Cog):
 
     @commands.command()
     @commands.has_permissions(administrator=True)
-<<<<<<< HEAD
     async def verifycourse(self, ctx, member: commands.MemberConverter, course_name: str, points: int, *, notes: str = ""):
         """Admin command to confirm certification/course completion"""
         try:
@@ -1060,7 +1067,7 @@ class Admin(commands.Cog):
             async with aiohttp.ClientSession() as session:
                 async with session.get(
                     f"{BACKEND_API_URL}/api/incentives/admin_list/",
-                    headers={"Authorization": f"Bearer {BOT_SHARED_SECRET}"},
+                    headers={"X-Bot-Secret": BOT_SHARED_SECRET},
                 ) as resp:
                     if resp.status != 200:
                         await ctx.send("❌ Failed to fetch rewards.")
@@ -1115,13 +1122,13 @@ class Admin(commands.Cog):
     @commands.has_permissions(administrator=True)
     async def enable_reward(self, ctx, *, reward_name: str):
         """Enable a reward (restock it)"""
-        await self.handle_reward_command(ctx, reward_name, "enable", "restocked")
+        await self.handle_reward_command_bot_api(ctx, reward_name, "enable", "restocked")
 
     @commands.command()
     @commands.has_permissions(administrator=True)
     async def disable_reward(self, ctx, *, reward_name: str):
         """Disable a reward (make it out of stock)"""
-        await self.handle_reward_command(ctx, reward_name, "disable", "out of stock")
+        await self.handle_reward_command_bot_api(ctx, reward_name, "disable", "out of stock")
 
     @commands.command()
     @commands.has_permissions(administrator=True)
@@ -1130,15 +1137,20 @@ class Admin(commands.Cog):
         try:
             from bot import BACKEND_API_URL, BOT_SHARED_SECRET
             async with aiohttp.ClientSession() as session:
-                # First find the reward by name
-                async with session.get(
-                    f"{BACKEND_API_URL}/api/incentives/admin_list/",
-                    headers={"Authorization": f"Bearer {BOT_SHARED_SECRET}"},
+                # First find the reward by name using bot API
+                async with session.post(
+                    f"{BACKEND_API_URL}/api/bot/",
+                    json={"action": "list-incentives"},
+                    headers={"Content-Type": "application/json", "X-Bot-Secret": BOT_SHARED_SECRET},
                 ) as resp:
                     if resp.status != 200:
                         await ctx.send("❌ Failed to fetch rewards.")
                         return
-                    rewards = await resp.json()
+                    data = await resp.json()
+                    if not data.get('success'):
+                        await ctx.send("❌ Failed to fetch rewards.")
+                        return
+                    rewards = data.get('incentives', [])
                 
                 # Smart matching
                 matches, match_type = self.find_reward_matches(rewards, reward_name)
@@ -1188,23 +1200,24 @@ class Admin(commands.Cog):
                 reward = matches[0]
                 old_stock = reward.get('stock_available', 0)
                 
-                # Update the stock
-                async with session.patch(
-                    f"{BACKEND_API_URL}/api/incentives/{reward.get('id')}/",
-                    json={"stock_available": amount},
-                    headers={"Authorization": f"Bearer {BOT_SHARED_SECRET}"},
+                # Update the stock using bot API
+                async with session.post(
+                    f"{BACKEND_API_URL}/api/bot/",
+                    json={
+                        "action": "update-incentive-stock",
+                        "incentive_id": reward.get('id'),
+                        "stock_count": amount
+                    },
+                    headers={"Content-Type": "application/json", "X-Bot-Secret": BOT_SHARED_SECRET},
                 ) as resp:
                     if resp.status != 200:
                         text = await resp.text()
                         await ctx.send(f"❌ Failed to update stock: {text[:200]}")
                         return
-                
-                # Clear cache after stock update
-                async with session.post(
-                    f"{BACKEND_API_URL}/api/incentives/clear_cache/",
-                    headers={"Authorization": f"Bearer {BOT_SHARED_SECRET}"},
-                ) as cache_resp:
-                    pass  # Don't fail if cache clear fails
+                    data = await resp.json()
+                    if not data.get('success'):
+                        await ctx.send(f"❌ Failed to update stock: {data.get('error', 'Unknown error')}")
+                        return
                 
                 embed = discord.Embed(
                     title="📦 Stock Updated",

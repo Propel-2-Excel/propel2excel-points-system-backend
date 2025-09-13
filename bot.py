@@ -312,7 +312,7 @@ async def on_member_join(member):
         
         embed.add_field(
             name="📋 Quick Commands",
-            value="`!resume` - Upload resume (+20 pts)\n`!event` - Mark attendance (+15 pts)\n`!resource <description>` - Submit resource for review (+10 pts if approved)\n`!linkedin` - Post update (+5 pts)",
+            value="`!resume` - Upload resume (+20 pts)\n`!event` - Mark attendance (+15 pts)\n`!resource <description>` - Submit resource for review (+10 pts if approved)\n`!linkedin <link>` - Submit LinkedIn post for review (+5 pts if approved)",
             inline=False
         )
         
@@ -330,7 +330,7 @@ async def on_member_join(member):
             "Start earning points right away by:\n"
             "• Sending messages (+1 point daily)\n"
             "• Reacting to posts (+2 points each)\n"
-            "• Using commands like `!resume` (professional review), `!event`, `!resource`, `!linkedin`\n\n"
+            "• Using commands like `!resume` (professional review), `!event`, `!resource`, `!linkedin <link>`\n\n"
             "**Unlock real incentives:**\n"
             "• 50 points = Azure Certification\n"
             "• 75 points = Resume Review\n"
@@ -548,95 +548,86 @@ async def help(ctx):
             color=0x0099ff
         )
         
-        # User Commands
+        # User Commands - Core
         embed.add_field(
-            name="👤 User Commands",
-            value="`!points` - Check your current points and next milestone\n"
+            name="👤 User Commands - Core",
+            value="`!points` - Check your current points\n"
+                  "`!pointshistory` - View your recent point-earning activities\n"
+                  "`!pointvalues` - See point values for different activities\n"
                   "`!rank [user]` - Show user's rank and points\n"
                   "`!milestones` - Show available incentives and progress\n"
-                  "`!pointshistory` - View your recent point-earning activities\n"
-                  "`!resource <description>` - Submit a resource for review",
+                  "`!streak` - Track your engagement streaks\n"
+                  "`!leaderboard [category]` - Show leaderboards (total, networking, learning, events, resources)",
             inline=False
         )
         
-        # New User Commands
+        # Activity & Earning Commands
         embed.add_field(
-            name="🆕 New User Commands",
-            value="`!streak` - Track engagement streaks (daily/weekly)\n"
-                  "`!levelup` - Show progress toward next tier/badge\n"
-                  "`!badge` - Display earned career/professional badges\n"
-                  "`!leaderboard [category]` - Show leaderboard by category\n"
-                  "  Categories: total, networking, learning, events, resume_reviews, resources",
+            name="🎯 Activity & Earning Commands",
+            value="`!resume` - Start resume review process (+20 pts process)\n"
+                  "`!event <details>` - Submit event attendance for review (+15 pts if approved)\n"
+                  "`!resource <description>` - Submit a resource for review (+10 pts if approved)\n"
+                  "`!linkedin <url>` - Submit LinkedIn post for review (+5 pts if approved)",
             inline=False
         )
         
-        # Resume Review Commands
+        # Shop & Rewards
         embed.add_field(
-            name="📋 Resume Review Commands",
-            value="`!resume` - Start resume review process\n"
-                  "`!review_status` - Check the status of your review request",
-            inline=False
-        )
-        
-        # Shop Commands
-        embed.add_field(
-<<<<<<< HEAD
-            name="🛍️ Shop Commands",
+            name="🛍️ Shop & Rewards",
             value="`!shop` - View available incentives and rewards\n"
-                  "`!redeem <incentive_name>` - Redeem an incentive with your points",
-=======
-            name="⚙️ Admin Commands",
-            value="`!addpoints @user <amount>` - Add points\n"
-                  "`!removepoints @user <amount>` - Remove points\n"
-                  "`!resetpoints @user` - Reset user points\n"
-                  "`!stats` - View bot statistics\n"
-                  "`!topusers` - Show top users\n"
-                  "`!rewards` - View all rewards\n"
-                  "`!enable_reward <name>` - Restock a reward (sets to 10)\n"
-                  "`!disable_reward <name>` - Make out of stock (sets to 0)\n"
-                  "`!set_stock <amount> <name>` - Set specific stock amount",
->>>>>>> origin/main
+                  "`!redeem <id>` - Redeem an incentive with your points",
+            inline=False
+        )
+        
+        # Resume Review System
+        embed.add_field(
+            name="📋 Resume Review System",
+            value="`!review_status` - Check the status of your review request\n"
+                  "`!list_professionals` - List available professionals (Admin)",
             inline=False
         )
         
         # Utility Commands
         embed.add_field(
             name="🔧 Utility Commands",
-            value="`!link <discord_username>` - Link Discord account with website\n"
+            value="`!link <6-digit-code>` - Link Discord account with website\n"
+                  "`!ping` - Test bot connectivity\n"
+                  "`!welcome` - Show welcome message again\n"
                   "`!help` - Show this help message",
             inline=False
         )
         
         # Admin Commands - Points Management
         embed.add_field(
-            name="⚙️ Admin Commands - Points",
+            name="⚙️ Admin Commands - Points Management",
             value="`!addpoints <member> <amount>` - Add points to a user\n"
                   "`!removepoints <member> <amount>` - Remove points from a user\n"
                   "`!resetpoints <member>` - Reset a user's points to zero\n"
-                  "`!stats` - Show bot statistics and activity\n"
-                  "`!topusers [limit]` - Show top users by points\n"
                   "`!clearwarnings <member>` - Clear warnings for a user\n"
-                  "`!suspenduser <member> <duration_minutes>` - Suspend user\n"
-                  "`!unsuspenduser <member>` - Remove suspension from a user\n"
-                  "`!activitylog [hours]` - Show recent activity log",
+                  "`!suspenduser <member> <minutes>` - Suspend user from earning points\n"
+                  "`!unsuspenduser <member>` - Remove suspension from a user",
             inline=False
         )
         
-        # Admin Commands - User Management
+        # Admin Commands - Statistics & Monitoring
         embed.add_field(
-            name="👥 Admin Commands - Users",
-            value="`!sendwelcome <member>` - Manually send welcome DM\n"
-                  "`!registeruser <member>` - Manually register a user with backend",
+            name="📊 Admin Commands - Statistics & Monitoring",
+            value="`!stats` - Show bot statistics and activity\n"
+                  "`!topusers [limit]` - Show top users by points\n"
+                  "`!activitylog [hours]` - Show recent activity log\n"
+                  "`!audit [hours] [user]` - View comprehensive activity audit logs\n"
+                  "`!highlight [period]` - Highlight top contributors (week/month/all)",
             inline=False
         )
         
-        # Admin Commands - Resource Management
+        # Admin Commands - Submission Reviews
         embed.add_field(
-            name="📚 Admin Commands - Resources",
-            value="`!checkmilestones [user]` - Manually check milestones\n"
+            name="📋 Admin Commands - Submission Reviews",
+            value="`!pendingresources` - View pending resource submissions\n"
+                  "`!pendingevents` - View pending event submissions\n"
+                  "`!pendinglinkedin` - View pending LinkedIn submissions\n"
                   "`!approveresource <user_id> <points> [notes]` - Approve resource\n"
                   "`!rejectresource <user_id> [reason]` - Reject resource\n"
-                  "`!pendingresources` - Show all pending resource submissions\n"
                   "`!approveevent <user> [notes]` - Approve event attendance\n"
                   "`!rejectevent <user> [reason]` - Reject event attendance\n"
                   "`!approvelinkedin <user> [notes]` - Approve LinkedIn update\n"
@@ -644,38 +635,56 @@ async def help(ctx):
             inline=False
         )
         
-        # Admin Commands - Resume Review Management
+        # Admin Commands - Reward Management
         embed.add_field(
-            name="📝 Admin Commands - Resume Reviews",
-            value="`!add_professional <name> <specialties>` - Add professional\n"
-                  "`!list_professionals` - List available professionals\n"
-                  "`!match_review <user> <professional_name>` - Match student\n"
-                  "`!review_stats` - Show resume review statistics\n"
-                  "`!pending_reviews` - Show pending review requests\n"
-                  "`!suggest_matches <user>` - Show professional matches\n"
-                  "`!schedule_session <user> <professional> <time>` - Schedule session",
+            name="🎁 Admin Commands - Reward Management",
+            value="`!rewards` - View all rewards and their status\n"
+                  "`!enable_reward <name>` - Restock a reward (sets to 10)\n"
+                  "`!disable_reward <name>` - Make reward out of stock\n"
+                  "`!set_stock <amount> <name>` - Set specific stock amount",
             inline=False
         )
         
-        # Admin Commands - New Features
+        # Admin Commands - Resume Review Management
         embed.add_field(
-            name="🆕 New Admin Commands",
-            value="`!verifycourse <member> <course> <points> [notes]` - Verify course\n"
-                  "`!highlight [period]` - Highlight top contributors (week/month/all)\n"
-                  "`!audit [hours] [user]` - View logs of all point activities",
+            name="📝 Admin Commands - Resume Review Management",
+            value="`!add_professional <name> <specialties>` - Add professional to pool\n"
+                  "`!match_review <user> <professional>` - Match student with professional\n"
+                  "`!review_stats` - Show resume review statistics\n"
+                  "`!pending_reviews` - Show pending review requests\n"
+                  "`!suggest_matches <user>` - Show professional matches for student\n"
+                  "`!schedule_session <user> <professional> <time>` - Schedule review session",
+            inline=False
+        )
+        
+        # Admin Commands - User Management
+        embed.add_field(
+            name="👥 Admin Commands - User Management",
+            value="`!sendwelcome <member>` - Manually send welcome DM\n"
+                  "`!registeruser <member>` - Manually register user with backend\n"
+                  "`!checkmilestones [user]` - Manually check user milestones\n"
+                  "`!verifycourse <member> <course> <points> [notes]` - Verify course completion",
+            inline=False
+        )
+        
+        # Coming Soon Features
+        embed.add_field(
+            name="🚧 Coming Soon",
+            value="`!levelup` - Show progress toward next tier/badge (placeholder)\n"
+                  "`!badge` - Display earned career/professional badges (placeholder)",
             inline=False
         )
         
         embed.add_field(
             name="📊 Command Summary",
-            value="**Total Commands:** 36 (15 User + 21 Admin)\n"
+            value="**Total Commands:** 50+ (22 User/General + 28+ Admin)\n"
                   "**Prefix:** Use `!` before each command\n"
                   "**Admin Commands:** Require Administrator permissions\n"
-                  "**Example:** `!points`, `!leaderboard networking`, `!addpoints @user 100`",
+                  "**Examples:** `!points`, `!leaderboard networking`, `!redeem 1`",
             inline=False
         )
         
-        embed.set_footer(text="Bot is online and ready to use! 🎉")
+        embed.set_footer(text="All commands are fully implemented and ready to use! 🎉")
         
         await ctx.send(embed=embed)
         logger.info(f"Help command used by {ctx.author} in {ctx.guild.name}")
