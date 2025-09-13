@@ -584,8 +584,13 @@ async def help(ctx):
             name="⚙️ Admin Commands",
             value="`!addpoints @user <amount>` - Add points\n"
                   "`!removepoints @user <amount>` - Remove points\n"
+                  "`!resetpoints @user` - Reset user points\n"
                   "`!stats` - View bot statistics\n"
-                  "`!topusers` - Show top users",
+                  "`!topusers` - Show top users\n"
+                  "`!rewards` - View all rewards\n"
+                  "`!enable_reward <name>` - Restock a reward (sets to 10)\n"
+                  "`!disable_reward <name>` - Make out of stock (sets to 0)\n"
+                  "`!set_stock <amount> <name>` - Set specific stock amount",
             inline=False
         )
         
