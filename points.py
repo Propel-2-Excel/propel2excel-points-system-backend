@@ -34,6 +34,95 @@ class Points(commands.Cog):
             print(f"Error syncing points with backend: {e}")
             return False
 
+    async def submit_resource_to_backend(self, discord_id, description):
+        """Submit resource to backend API"""
+        try:
+            from bot import BACKEND_API_URL, BOT_SHARED_SECRET
+            async with aiohttp.ClientSession() as session:
+                payload = {
+                    "action": "submit-resource",
+                    "discord_id": discord_id,
+                    "description": description,
+                }
+                
+                async with session.post(
+                    f"{BACKEND_API_URL}/api/bot/",
+                    json=payload,
+                    headers={
+                        "Content-Type": "application/json",
+                        "X-Bot-Secret": BOT_SHARED_SECRET,
+                    }
+                ) as response:
+                    if response.status == 201:
+                        return True
+                    else:
+                        error_text = await response.text()
+                        print(f"Error submitting resource: {response.status} - {error_text}")
+                        return False
+                        
+        except Exception as e:
+            print(f"Error submitting resource to backend: {e}")
+            return False
+
+    async def approve_resource_backend(self, discord_id, points, notes):
+        """Approve resource via backend API"""
+        try:
+            from bot import BACKEND_API_URL, BOT_SHARED_SECRET
+            async with aiohttp.ClientSession() as session:
+                payload = {
+                    "action": "approve-resource",
+                    "discord_id": discord_id,
+                    "points": points,
+                    "notes": notes,
+                }
+                
+                async with session.post(
+                    f"{BACKEND_API_URL}/api/bot/",
+                    json=payload,
+                    headers={
+                        "Content-Type": "application/json",
+                        "X-Bot-Secret": BOT_SHARED_SECRET,
+                    }
+                ) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        return True, data
+                    else:
+                        error_text = await response.text()
+                        return False, f"{response.status} - {error_text}"
+                        
+        except Exception as e:
+            return False, str(e)
+
+    async def reject_resource_backend(self, discord_id, reason):
+        """Reject resource via backend API"""
+        try:
+            from bot import BACKEND_API_URL, BOT_SHARED_SECRET
+            async with aiohttp.ClientSession() as session:
+                payload = {
+                    "action": "reject-resource",
+                    "discord_id": discord_id,
+                    "reason": reason,
+                }
+                
+                async with session.post(
+                    f"{BACKEND_API_URL}/api/bot/",
+                    json=payload,
+                    headers={
+                        "Content-Type": "application/json",
+                        "X-Bot-Secret": BOT_SHARED_SECRET,
+                    }
+                ) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        return True, data
+                    else:
+                        error_text = await response.text()
+                        return False, f"{response.status} - {error_text}"
+                        
+        except Exception as e:
+            return False, str(e)
+
     async def award_daily_points(self, message):
         """Award daily Discord points and send motivational message if points were actually awarded"""
         user_id = str(message.author.id)
@@ -385,17 +474,42 @@ class Points(commands.Cog):
     @commands.command()
     @commands.cooldown(1, 10, commands.BucketType.user)  # 1 use per 10 seconds per user
     async def event(self, ctx):
-        """Mark event attendance for +15 points"""
+        """Submit event attendance for admin review and potential points"""
         try:
-            self.add_points(str(ctx.author.id), 15, "Event attendance")
+            # Create submission confirmation embed
             embed = discord.Embed(
-                title="🎉 Event Attendance",
-                description=f"{ctx.author.mention}, you've earned **15 points** for attending the event!",
-                color=0x00ff00
+                title="🎉 Event Attendance Submitted",
+                description=f"{ctx.author.mention}, your event attendance has been submitted for admin review!",
+                color=0x0099ff
             )
+            
+            embed.add_field(
+                name="⏳ Status",
+                value="🔄 **Pending Review**",
+                inline=True
+            )
+            
+            embed.add_field(
+                name="🎯 Potential Reward",
+                value="**15 points** (if approved)",
+                inline=True
+            )
+            
+            embed.add_field(
+                name="📋 Next Steps",
+                value="An admin will review your submission and award points if approved. You'll be notified of the decision!",
+                inline=False
+            )
+            
+            embed.set_footer(text="Thank you for participating in our events!")
+            
             await ctx.send(embed=embed)
+            
+            # Forward to admin channel for review
+            await self.forward_to_admin_channel(ctx, "Event", "Event attendance claimed", "User claims to have attended an event and is requesting 15 points.")
+            
         except Exception as e:
-            await ctx.send("❌ An error occurred while processing your event attendance.")
+            await ctx.send("❌ An error occurred while submitting your event attendance.")
             print(f"Error in event command: {e}")
 
     @commands.command()
@@ -408,7 +522,12 @@ class Points(commands.Cog):
                 await ctx.send("❌ Please provide a detailed description of your resource (at least 10 characters).\n\n**Usage:** `!resource <description of the resource you want to share>`")
                 return
             
-            # For MVP, do not persist local resource submissions; just notify admins
+            # Save resource submission to backend
+            success = await self.submit_resource_to_backend(str(ctx.author.id), description)
+            
+            if not success:
+                await ctx.send("❌ Failed to submit resource to backend. Please try again later.")
+                return
             
             # Create submission confirmation embed
             embed = discord.Embed(
@@ -445,26 +564,35 @@ class Points(commands.Cog):
             
             await ctx.send(embed=embed)
             
-            # Notify admins about the new submission
-            await self.notify_admins_of_submission(ctx, description)
+            # Forward to admin channel for review
+            await self.forward_to_admin_channel(ctx, "Resource", description)
             
         except Exception as e:
             await ctx.send("❌ An error occurred while submitting your resource. Please try again.")
             print(f"Error in resource command: {e}")
 
-    async def notify_admins_of_submission(self, ctx, description):
-        """Notify admins about a new resource submission"""
+    async def forward_to_admin_channel(self, ctx, submission_type, description="", additional_info=""):
+        """Forward user submissions to admin channel for review"""
         try:
-            # Get all admins in the server
-            admins = [member for member in ctx.guild.members if member.guild_permissions.administrator]
+            import os
+            admin_channel_id = os.getenv('ADMIN_CHANNEL_ID')
             
-            if not admins:
+            if not admin_channel_id or admin_channel_id == 'PLACEHOLDER_CHANNEL_ID':
+                # Fallback to DMing admins if no admin channel configured
+                await self.notify_admins_via_dm(ctx, submission_type, description, additional_info)
+                return
+            
+            admin_channel = self.bot.get_channel(int(admin_channel_id))
+            if not admin_channel:
+                print(f"Admin channel with ID {admin_channel_id} not found")
+                # Fallback to DMing admins
+                await self.notify_admins_via_dm(ctx, submission_type, description, additional_info)
                 return
             
             # Create admin notification embed
             embed = discord.Embed(
-                title="📚 New Resource Submission",
-                description=f"**{ctx.author.display_name}** has submitted a resource for review:",
+                title=f"🔔 New {submission_type} Submission",
+                description=f"**{ctx.author.display_name}** has submitted a {submission_type.lower()} for review:",
                 color=0xff9900
             )
             
@@ -480,15 +608,83 @@ class Points(commands.Cog):
                 inline=True
             )
             
+            if description:
+                embed.add_field(
+                    name="📝 Description",
+                    value=description[:1000] + "..." if len(description) > 1000 else description,
+                    inline=False
+                )
+            
+            if additional_info:
+                embed.add_field(
+                    name="ℹ️ Additional Info",
+                    value=additional_info,
+                    inline=False
+                )
+            
+            # Add admin action buttons
             embed.add_field(
-                name="📝 Description",
-                value=description[:1000] + "..." if len(description) > 1000 else description,
+                name="⚡ Admin Actions",
+                value=f"Use `!approve{submission_type.lower()}` or `!reject{submission_type.lower()}` commands to review this submission.",
                 inline=False
             )
             
+            embed.set_footer(text=f"Channel: #{ctx.channel.name} | Server: {ctx.guild.name}")
+            
+            # Send to admin channel
+            await admin_channel.send(embed=embed)
+            print(f"✅ Forwarded {submission_type} submission to admin channel")
+            
+        except Exception as e:
+            print(f"Error forwarding to admin channel: {e}")
+            # Fallback to DMing admins
+            await self.notify_admins_via_dm(ctx, submission_type, description, additional_info)
+
+    async def notify_admins_via_dm(self, ctx, submission_type, description="", additional_info=""):
+        """Fallback method to notify admins via DM"""
+        try:
+            # Get all admins in the server
+            admins = [member for member in ctx.guild.members if member.guild_permissions.administrator]
+            
+            if not admins:
+                return
+            
+            # Create admin notification embed
+            embed = discord.Embed(
+                title=f"🔔 New {submission_type} Submission",
+                description=f"**{ctx.author.display_name}** has submitted a {submission_type.lower()} for review:",
+                color=0xff9900
+            )
+            
+            embed.add_field(
+                name="👤 Submitted By",
+                value=f"{ctx.author.mention} ({ctx.author.id})",
+                inline=True
+            )
+            
+            embed.add_field(
+                name="📅 Submitted At",
+                value=f"<t:{int(ctx.message.created_at.timestamp())}:F>",
+                inline=True
+            )
+            
+            if description:
+                embed.add_field(
+                    name="📝 Description",
+                    value=description[:1000] + "..." if len(description) > 1000 else description,
+                    inline=False
+                )
+            
+            if additional_info:
+                embed.add_field(
+                    name="ℹ️ Additional Info",
+                    value=additional_info,
+                    inline=False
+                )
+            
             embed.add_field(
                 name="🔧 Admin Actions",
-                value="Use `!approveresource <user_id> <points> [notes]` to approve\nUse `!rejectresource <user_id> [reason]` to reject",
+                value=f"Use `!approve{submission_type.lower()}` or `!reject{submission_type.lower()}` commands to review this submission.",
                 inline=False
             )
             
@@ -506,17 +702,42 @@ class Points(commands.Cog):
     @commands.command()
     @commands.cooldown(1, 10, commands.BucketType.user)  # 1 use per 10 seconds per user
     async def linkedin(self, ctx):
-        """Post LinkedIn update for +5 points"""
+        """Submit LinkedIn update for admin review and potential points"""
         try:
-            self.add_points(str(ctx.author.id), 5, "LinkedIn update")
+            # Create submission confirmation embed
             embed = discord.Embed(
-                title="💼 LinkedIn Update",
-                description=f"{ctx.author.mention}, you've earned **5 points** for posting a LinkedIn update!",
-                color=0x00ff00
+                title="💼 LinkedIn Update Submitted",
+                description=f"{ctx.author.mention}, your LinkedIn update has been submitted for admin review!",
+                color=0x0099ff
             )
+            
+            embed.add_field(
+                name="⏳ Status",
+                value="🔄 **Pending Review**",
+                inline=True
+            )
+            
+            embed.add_field(
+                name="🎯 Potential Reward",
+                value="**5 points** (if approved)",
+                inline=True
+            )
+            
+            embed.add_field(
+                name="📋 Next Steps",
+                value="An admin will review your submission and award points if approved. You'll be notified of the decision!",
+                inline=False
+            )
+            
+            embed.set_footer(text="Thank you for sharing your professional updates!")
+            
             await ctx.send(embed=embed)
+            
+            # Forward to admin channel for review
+            await self.forward_to_admin_channel(ctx, "LinkedIn", "LinkedIn update posted", "User claims to have posted a LinkedIn update and is requesting 5 points.")
+            
         except Exception as e:
-            await ctx.send("❌ An error occurred while processing your LinkedIn update.")
+            await ctx.send("❌ An error occurred while submitting your LinkedIn update.")
             print(f"Error in linkedin command: {e}")
 
     @commands.command()
@@ -608,12 +829,11 @@ class Points(commands.Cog):
     async def approveresource(self, ctx, user_id: str, points: int, *, notes: str = ""):
         """Approve a resource submission and award points"""
         try:
-            submission = None  # backend workflow not implemented yet
-            if not submission:
-                await ctx.send(f"❌ No pending resource submissions found for user ID: {user_id}")
+            success, result = await self.approve_resource_backend(user_id, points, notes)
+            
+            if not success:
+                await ctx.send(f"❌ Failed to approve resource: {result}")
                 return
-            # Award via backend
-            self.add_points(user_id, points, f"Resource share approved by {ctx.author.display_name}")
             
             # Create approval embed
             embed = discord.Embed(
@@ -631,6 +851,12 @@ class Points(commands.Cog):
             embed.add_field(
                 name="🎯 Points Awarded",
                 value=f"**{points} points**",
+                inline=True
+            )
+            
+            embed.add_field(
+                name="📊 New Total",
+                value=f"**{result.get('total_points', 'N/A')} points**",
                 inline=True
             )
             
@@ -667,9 +893,10 @@ class Points(commands.Cog):
     async def rejectresource(self, ctx, user_id: str, *, reason: str = "No reason provided"):
         """Reject a resource submission"""
         try:
-            submission = None
-            if not submission:
-                await ctx.send(f"❌ No pending resource submissions found for user_id: {user_id}")
+            success, result = await self.reject_resource_backend(user_id, reason)
+            
+            if not success:
+                await ctx.send(f"❌ Failed to reject resource: {result}")
                 return
             
             # Create rejection embed
@@ -811,6 +1038,194 @@ class Points(commands.Cog):
                 
         except Exception as e:
             print(f"Error notifying user of rejection: {e}")
+
+    @commands.command()
+    async def streak(self, ctx):
+        """Track engagement streaks (daily/weekly)"""
+        try:
+            user_id = str(ctx.author.id)
+            
+            # Fetch streak data from backend
+            response = await self._backend_request({
+                "action": "get-streak",
+                "discord_id": user_id
+            })
+            
+            current_streak = response.get('current_streak', 0)
+            longest_streak = response.get('longest_streak', 0)
+            streak_type = response.get('streak_type', 'daily')
+            last_activity = response.get('last_activity', 'Never')
+            streak_bonus = response.get('streak_bonus', 0)
+            
+            embed = discord.Embed(
+                title="🔥 Engagement Streak",
+                description=f"Your current {streak_type} engagement streak",
+                color=0xff6b35 if current_streak > 0 else 0x666666
+            )
+            
+            embed.add_field(
+                name="Current Streak",
+                value=f"**{current_streak}** {streak_type} streak(s)",
+                inline=True
+            )
+            
+            embed.add_field(
+                name="Longest Streak",
+                value=f"**{longest_streak}** {streak_type} streak(s)",
+                inline=True
+            )
+            
+            embed.add_field(
+                name="Streak Bonus",
+                value=f"**+{streak_bonus}** points",
+                inline=True
+            )
+            
+            embed.add_field(
+                name="Last Activity",
+                value=last_activity,
+                inline=False
+            )
+            
+            if current_streak >= 7:
+                embed.add_field(
+                    name="🎉 Streak Milestone!",
+                    value="You're on fire! Keep it up!",
+                    inline=False
+                )
+            elif current_streak >= 3:
+                embed.add_field(
+                    name="💪 Great Progress!",
+                    value="You're building a solid streak!",
+                    inline=False
+                )
+            else:
+                embed.add_field(
+                    name="💡 Streak Tips",
+                    value="• Send messages daily to maintain your streak\n• React to posts to boost engagement\n• Participate in events and activities",
+                    inline=False
+                )
+            
+            await ctx.send(embed=embed)
+            
+        except Exception as e:
+            await ctx.send("❌ An error occurred while fetching streak data.")
+            print(f"Error in streak command: {e}")
+
+    @commands.command()
+    async def levelup(self, ctx):
+        """Show progress toward the next tier or badge"""
+        embed = discord.Embed(
+            title="🚧 Coming Soon!",
+            description="The level system is not yet implemented but is coming soon!",
+            color=0xffaa00
+        )
+        embed.add_field(
+            name="What's Coming",
+            value="• Level progression system\n• Tier-based benefits\n• Visual progress tracking\n• Achievement badges",
+            inline=False
+        )
+        embed.add_field(
+            name="Stay Tuned",
+            value="We're working hard to bring you an amazing leveling experience!",
+            inline=False
+        )
+        await ctx.send(embed=embed)
+
+    @commands.command()
+    async def badge(self, ctx):
+        """Display earned career/professional badges"""
+        embed = discord.Embed(
+            title="🏆 Coming Soon!",
+            description="The badge system is not yet implemented but is coming soon!",
+            color=0xffaa00
+        )
+        embed.add_field(
+            name="What's Coming",
+            value="• Career achievement badges\n• Professional milestone badges\n• Activity completion badges\n• Special recognition badges",
+            inline=False
+        )
+        embed.add_field(
+            name="Stay Tuned",
+            value="We're working hard to bring you an amazing badge collection system!",
+            inline=False
+        )
+        await ctx.send(embed=embed)
+
+    @commands.command()
+    async def leaderboard(self, ctx, category: str = "total"):
+        """Show leaderboard by category (networking, learning, event attendance)"""
+        try:
+            # Validate category
+            valid_categories = ["total", "networking", "learning", "events", "resume_reviews", "resources"]
+            if category.lower() not in valid_categories:
+                await ctx.send(f"❌ Invalid category. Available categories: {', '.join(valid_categories)}")
+                return
+            
+            category = category.lower()
+            
+            # Fetch leaderboard data from backend
+            response = await self._backend_request({
+                "action": "leaderboard-category",
+                "category": category,
+                "limit": 10
+            })
+            
+            leaderboard_data = response.get('leaderboard', [])
+            category_name = response.get('category_name', category.title())
+            total_users = response.get('total_users', 0)
+            
+            embed = discord.Embed(
+                title=f"🏆 {category_name} Leaderboard",
+                description=f"Top performers in {category_name.lower()}",
+                color=0x00ff88
+            )
+            
+            if not leaderboard_data:
+                embed.add_field(
+                    name="📊 No Data",
+                    value="No data available for this category yet.",
+                    inline=False
+                )
+            else:
+                for i, user_data in enumerate(leaderboard_data, 1):
+                    user_id = user_data.get('discord_id')
+                    points = user_data.get('points', 0)
+                    username = user_data.get('username', f'User {user_id}')
+                    
+                    # Get Discord user if possible
+                    try:
+                        user = await self.bot.fetch_user(int(user_id))
+                        display_name = user.display_name
+                    except:
+                        display_name = username
+                    
+                    # Medal emojis for top 3
+                    medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"**#{i}**"
+                    
+                    embed.add_field(
+                        name=f"{medal} {display_name}",
+                        value=f"**{points:,}** {category_name.lower()} points",
+                        inline=True
+                    )
+            
+            embed.add_field(
+                name="📈 Total Users",
+                value=f"**{total_users}** users tracked",
+                inline=True
+            )
+            
+            embed.add_field(
+                name="💡 Categories",
+                value="Use `!leaderboard <category>` for:\n• networking\n• learning\n• events\n• resume_reviews\n• resources",
+                inline=False
+            )
+            
+            await ctx.send(embed=embed)
+            
+        except Exception as e:
+            await ctx.send("❌ An error occurred while fetching leaderboard data.")
+            print(f"Error in leaderboard command: {e}")
 
 async def setup(bot):
     await bot.add_cog(Points(bot))

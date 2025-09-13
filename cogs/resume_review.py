@@ -31,58 +31,6 @@ class ResumeReview(commands.Cog):
                     raise Exception(f"Backend error {response.status}: {error_text}")
 
     @commands.command()
-    @commands.cooldown(1, 30, commands.BucketType.user)
-    async def resume_review(self, ctx):
-        """Start resume review process - sends DM with form link and instructions"""
-        try:
-            embed = discord.Embed(
-                title="📋 Resume Review Request",
-                description="I'll help you get a professional resume review!",
-                color=0x0099ff
-            )
-            embed.add_field(
-                name="📝 Next Steps", 
-                value="1. Click the form link below\n2. Fill out your details\n3. Upload your resume\n4. Select your target industry\n5. Choose your availability",
-                inline=False
-            )
-            embed.add_field(
-                name="🔗 Form Link",
-                value=f"[Resume Review Form]({self.form_url})",
-                inline=False
-            )
-            embed.add_field(
-                name="⏰ Sessions",
-                value="30-minute slots between 9 AM - 5 PM",
-                inline=True
-            )
-            embed.add_field(
-                name="📧 Contact",
-                value="Email: propel@propel2excel.com",
-                inline=True
-            )
-            embed.add_field(
-                name="💡 Tips",
-                value="• Have your resume ready as PDF\n• Be specific about your target role\n• Choose multiple time slots for better matching",
-                inline=False
-            )
-            
-            await ctx.author.send(embed=embed)
-            await ctx.send(f"✅ {ctx.author.mention} Check your DMs for the resume review form!")
-            
-            # Record the activity using current backend pattern
-            await self._backend_request({
-                "action": "add-activity",
-                "discord_id": str(ctx.author.id),
-                "activity_type": "resume_review_request",
-                "details": "Resume review process started",
-            })
-            
-        except discord.Forbidden:
-            await ctx.send("❌ I can't send you a DM. Please enable DMs from server members and try again.")
-        except Exception as e:
-            await ctx.send(f"❌ Error: {e}")
-
-    @commands.command()
     @commands.cooldown(1, 10, commands.BucketType.user)
     async def review_status(self, ctx):
         """Check status of your resume review request"""
@@ -100,7 +48,7 @@ class ResumeReview(commands.Cog):
             )
             embed.add_field(
                 name="Next Steps",
-                value="If you haven't submitted your form yet, use `!resume_review` to get started!",
+                value="If you haven't submitted your form yet, use `!resume` to get started!",
                 inline=False
             )
             await ctx.send(embed=embed)
