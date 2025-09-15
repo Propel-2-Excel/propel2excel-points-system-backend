@@ -10,12 +10,14 @@ import math
 import json
 import aiohttp
 
+# Add current directory to Python path for cog imports
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
 # Set up logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('bot.log'),
         logging.StreamHandler(sys.stdout)
     ]
 )
