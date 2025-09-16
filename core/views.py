@@ -13,7 +13,7 @@ import logging
 import requests
 
 logger = logging.getLogger(__name__)
-from .models import User, Track, Activity, PointsLog, Incentive, Redemption, UserStatus, UserIncentiveUnlock, DiscordLinkCode, Professional, ReviewRequest, ScheduledSession, ProfessionalAvailability, ResourceSubmission, UserPreferences
+from .models import User, Track, Activity, PointsLog, Incentive, Redemption, UserStatus, UserIncentiveUnlock, DiscordLinkCode, Professional, ReviewRequest, ScheduledSession, ProfessionalAvailability, ResourceSubmission, EventSubmission, LinkedInSubmission, UserPreferences
 from .serializers import (
     UserSerializer, TrackSerializer, ActivitySerializer, PointsLogSerializer,
     IncentiveSerializer, RedemptionSerializer, UserStatusSerializer, DiscordLinkCodeSerializer,
@@ -1720,9 +1720,17 @@ class BotIntegrationView(APIView):
       - { "action": "unsuspend-user", "discord_id": str }
       - { "action": "activitylog", "hours"?: int, "limit"?: int }
       - { "action": "submit-resource", "discord_id": str, "description": str }
-      - { "action": "approve-resource", "discord_id": str, "points": int, "notes"?: str }
-      - { "action": "reject-resource", "discord_id": str, "reason"?: str }
+      - { "action": "approve-resource", "submission_id": int, "points": int, "notes"?: str }
+      - { "action": "reject-resource", "submission_id": int, "reason"?: str }
       - { "action": "pending-resources" }
+      - { "action": "submit-event", "discord_id": str, "event_name"?: str, "description"?: str }
+      - { "action": "approve-event", "submission_id": int, "points": int, "notes"?: str }
+      - { "action": "reject-event", "submission_id": int, "reason"?: str }
+      - { "action": "pending-events" }
+      - { "action": "submit-linkedin", "discord_id": str, "description"?: str }
+      - { "action": "approve-linkedin", "submission_id": int, "points": int, "notes"?: str }
+      - { "action": "reject-linkedin", "submission_id": int, "reason"?: str }
+      - { "action": "pending-linkedin" }
     """
 
     permission_classes = [permissions.AllowAny]
@@ -1785,6 +1793,22 @@ class BotIntegrationView(APIView):
             return self._reject_resource(request)
         if action == "pending-resources":
             return self._pending_resources(request)
+        if action == "submit-event":
+            return self._submit_event(request)
+        if action == "approve-event":
+            return self._approve_event(request)
+        if action == "reject-event":
+            return self._reject_event(request)
+        if action == "pending-events":
+            return self._pending_events(request)
+        if action == "submit-linkedin":
+            return self._submit_linkedin(request)
+        if action == "approve-linkedin":
+            return self._approve_linkedin(request)
+        if action == "reject-linkedin":
+            return self._reject_linkedin(request)
+        if action == "pending-linkedin":
+            return self._pending_linkedin(request)
 
         return Response({"error": "Unknown action"}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -2603,26 +2627,17 @@ class BotIntegrationView(APIView):
 
     def _approve_resource(self, request):
         """Approve a resource submission and award points"""
-        discord_id = request.data.get("discord_id")
+        submission_id = request.data.get("submission_id")
         points = request.data.get("points", 10)
         notes = request.data.get("notes", "")
         
-        if not discord_id:
-            return Response({"error": "discord_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+        if not submission_id:
+            return Response({"error": "submission_id is required"}, status=status.HTTP_400_BAD_REQUEST)
         
         try:
-            user = User.objects.get(discord_id=str(discord_id))
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-        
-        # Find the most recent pending submission for this user
-        submission = ResourceSubmission.objects.filter(
-            user=user, 
-            status='pending'
-        ).order_by('-submitted_at').first()
-        
-        if not submission:
-            return Response({"error": "No pending resource submissions found"}, status=status.HTTP_404_NOT_FOUND)
+            submission = ResourceSubmission.objects.get(id=submission_id, status='pending')
+        except ResourceSubmission.DoesNotExist:
+            return Response({"error": "Pending resource submission not found"}, status=status.HTTP_404_NOT_FOUND)
         
         # Update submission status
         submission.status = 'approved'
@@ -2638,46 +2653,38 @@ class BotIntegrationView(APIView):
         
         with transaction.atomic():
             PointsLog.objects.create(
-                user=user,
+                user=submission.user,
                 activity=activity,
                 points_earned=points,
                 details=f"Resource approved: {submission.description[:100]}",
             )
-            user.total_points += points
-            user.save(update_fields=["total_points"])
-            status_row, _ = UserStatus.objects.get_or_create(user=user)
+            submission.user.total_points += points
+            submission.user.save(update_fields=["total_points"])
+            status_row, _ = UserStatus.objects.get_or_create(user=submission.user)
             status_row.last_activity = timezone.now()
             status_row.save(update_fields=["last_activity"])
         
         return Response({
             "success": True,
             "submission_id": submission.id,
+            "user_id": submission.user.discord_id,
             "points_awarded": points,
-            "total_points": user.total_points,
+            "total_points": submission.user.total_points,
             "message": "Resource approved and points awarded"
         })
 
     def _reject_resource(self, request):
         """Reject a resource submission"""
-        discord_id = request.data.get("discord_id")
+        submission_id = request.data.get("submission_id")
         reason = request.data.get("reason", "No reason provided")
         
-        if not discord_id:
-            return Response({"error": "discord_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+        if not submission_id:
+            return Response({"error": "submission_id is required"}, status=status.HTTP_400_BAD_REQUEST)
         
         try:
-            user = User.objects.get(discord_id=str(discord_id))
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
-        
-        # Find the most recent pending submission for this user
-        submission = ResourceSubmission.objects.filter(
-            user=user, 
-            status='pending'
-        ).order_by('-submitted_at').first()
-        
-        if not submission:
-            return Response({"error": "No pending resource submissions found"}, status=status.HTTP_404_NOT_FOUND)
+            submission = ResourceSubmission.objects.get(id=submission_id, status='pending')
+        except ResourceSubmission.DoesNotExist:
+            return Response({"error": "Pending resource submission not found"}, status=status.HTTP_404_NOT_FOUND)
         
         # Update submission status
         submission.status = 'rejected'
@@ -2688,15 +2695,18 @@ class BotIntegrationView(APIView):
         return Response({
             "success": True,
             "submission_id": submission.id,
+            "user_id": submission.user.discord_id,
             "message": "Resource rejected"
         })
 
     def _pending_resources(self, request):
-        """Get all pending resource submissions"""
+        """Get all pending resource submissions - OPTIMIZED"""
+        # OPTIMIZED: Use select_related to fetch user data in single query
         pending_submissions = ResourceSubmission.objects.filter(
             status='pending'
-        ).order_by('-submitted_at')
+        ).select_related('user').order_by('-submitted_at')
         
+        # OPTIMIZED: Build list in single pass, avoiding N+1 queries
         submissions_data = []
         for submission in pending_submissions:
             submissions_data.append({
@@ -2709,7 +2719,257 @@ class BotIntegrationView(APIView):
         
         return Response({
             "success": True,
-            "pending_count": pending_submissions.count(),
+            "pending_count": len(submissions_data),  # Use len() instead of count() query
+            "submissions": submissions_data
+        })
+
+    def _submit_event(self, request):
+        """Submit an event attendance for admin review"""
+        discord_id = request.data.get("discord_id")
+        event_name = request.data.get("event_name", "Event Attendance")
+        description = request.data.get("description", "User claims to have attended an event")
+        
+        if not discord_id:
+            return Response({"error": "discord_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(discord_id=str(discord_id))
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Create event submission
+        submission = EventSubmission.objects.create(
+            user=user,
+            event_details=f"{event_name}: {description}",
+            status='pending'
+        )
+        
+        return Response({
+            "success": True,
+            "submission_id": submission.id,
+            "message": "Event attendance submitted for review"
+        }, status=status.HTTP_201_CREATED)
+
+    def _approve_event(self, request):
+        """Approve an event submission and award points - OPTIMIZED"""
+        submission_id = request.data.get("submission_id")
+        points = request.data.get("points", 15)
+        notes = request.data.get("notes", "")
+        
+        if not submission_id:
+            return Response({"error": "submission_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            submission = EventSubmission.objects.get(id=submission_id, status='pending')
+        except EventSubmission.DoesNotExist:
+            return Response({"error": "Pending event submission not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Update submission status
+        submission.status = 'approved'
+        submission.points_awarded = points
+        submission.admin_notes = notes
+        submission.reviewed_at = timezone.now()
+        submission.save()
+        
+        # Award points via admin adjustment
+        activity = Activity.objects.filter(activity_type='event_attendance', is_active=True).first()
+        if not activity:
+            return Response({"error": "event_attendance activity not configured"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+        with transaction.atomic():
+            PointsLog.objects.create(
+                user=submission.user,
+                activity=activity,
+                points_earned=points,
+                details=f"Event approved: {submission.event_details}",
+            )
+            submission.user.total_points += points
+            submission.user.save(update_fields=["total_points"])
+            status_row, _ = UserStatus.objects.get_or_create(user=submission.user)
+            status_row.last_activity = timezone.now()
+            status_row.save(update_fields=["last_activity"])
+        
+        return Response({
+            "success": True,
+            "submission_id": submission.id,
+            "user_id": submission.user.discord_id,
+            "points_awarded": points,
+            "total_points": submission.user.total_points,
+            "message": "Event approved and points awarded"
+        })
+
+    def _reject_event(self, request):
+        """Reject an event submission - OPTIMIZED"""
+        submission_id = request.data.get("submission_id")
+        reason = request.data.get("reason", "No reason provided")
+        
+        if not submission_id:
+            return Response({"error": "submission_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            submission = EventSubmission.objects.get(id=submission_id, status='pending')
+        except EventSubmission.DoesNotExist:
+            return Response({"error": "Pending event submission not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Update submission status
+        submission.status = 'rejected'
+        submission.admin_notes = reason
+        submission.reviewed_at = timezone.now()
+        submission.save()
+        
+        return Response({
+            "success": True,
+            "submission_id": submission.id,
+            "user_id": submission.user.discord_id,
+            "message": "Event rejected"
+        })
+
+    def _pending_events(self, request):
+        """Get all pending event submissions - OPTIMIZED"""
+        # OPTIMIZED: Use select_related to fetch user data in single query
+        pending_submissions = EventSubmission.objects.filter(
+            status='pending'
+        ).select_related('user').order_by('-submitted_at')
+        
+        # OPTIMIZED: Build list in single pass, avoiding N+1 queries
+        submissions_data = []
+        for submission in pending_submissions:
+            submissions_data.append({
+                "id": submission.id,
+                "discord_id": submission.user.discord_id,
+                "username": submission.user.username,
+                "event_name": "Event Attendance",  # Default since we don't have separate event_name field
+                "description": submission.event_details,
+                "submitted_at": submission.submitted_at.isoformat(),
+            })
+        
+        return Response({
+            "success": True,
+            "pending_count": len(submissions_data),  # Use len() instead of count() query
+            "submissions": submissions_data
+        })
+
+    def _submit_linkedin(self, request):
+        """Submit a LinkedIn update for admin review"""
+        discord_id = request.data.get("discord_id")
+        description = request.data.get("description", "User claims to have posted a LinkedIn update")
+        
+        if not discord_id:
+            return Response({"error": "discord_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            user = User.objects.get(discord_id=str(discord_id))
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Create LinkedIn submission
+        submission = LinkedInSubmission.objects.create(
+            user=user,
+            linkedin_url=description,
+            status='pending'
+        )
+        
+        return Response({
+            "success": True,
+            "submission_id": submission.id,
+            "message": "LinkedIn update submitted for review"
+        }, status=status.HTTP_201_CREATED)
+
+    def _approve_linkedin(self, request):
+        """Approve a LinkedIn submission and award points - OPTIMIZED"""
+        submission_id = request.data.get("submission_id")
+        points = request.data.get("points", 5)
+        notes = request.data.get("notes", "")
+        
+        if not submission_id:
+            return Response({"error": "submission_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            submission = LinkedInSubmission.objects.get(id=submission_id, status='pending')
+        except LinkedInSubmission.DoesNotExist:
+            return Response({"error": "Pending LinkedIn submission not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Update submission status
+        submission.status = 'approved'
+        submission.points_awarded = points
+        submission.admin_notes = notes
+        submission.reviewed_at = timezone.now()
+        submission.save()
+        
+        # Award points via admin adjustment
+        activity = Activity.objects.filter(activity_type='linkedin_post', is_active=True).first()
+        if not activity:
+            return Response({"error": "linkedin_post activity not configured"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+        with transaction.atomic():
+            PointsLog.objects.create(
+                user=submission.user,
+                activity=activity,
+                points_earned=points,
+                details=f"LinkedIn update approved: {submission.linkedin_url[:100]}",
+            )
+            submission.user.total_points += points
+            submission.user.save(update_fields=["total_points"])
+            status_row, _ = UserStatus.objects.get_or_create(user=submission.user)
+            status_row.last_activity = timezone.now()
+            status_row.save(update_fields=["last_activity"])
+        
+        return Response({
+            "success": True,
+            "submission_id": submission.id,
+            "user_id": submission.user.discord_id,
+            "points_awarded": points,
+            "total_points": submission.user.total_points,
+            "message": "LinkedIn update approved and points awarded"
+        })
+
+    def _reject_linkedin(self, request):
+        """Reject a LinkedIn submission - OPTIMIZED"""
+        submission_id = request.data.get("submission_id")
+        reason = request.data.get("reason", "No reason provided")
+        
+        if not submission_id:
+            return Response({"error": "submission_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            submission = LinkedInSubmission.objects.get(id=submission_id, status='pending')
+        except LinkedInSubmission.DoesNotExist:
+            return Response({"error": "Pending LinkedIn submission not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Update submission status
+        submission.status = 'rejected'
+        submission.admin_notes = reason
+        submission.reviewed_at = timezone.now()
+        submission.save()
+        
+        return Response({
+            "success": True,
+            "submission_id": submission.id,
+            "user_id": submission.user.discord_id,
+            "message": "LinkedIn update rejected"
+        })
+
+    def _pending_linkedin(self, request):
+        """Get all pending LinkedIn submissions - OPTIMIZED"""
+        # OPTIMIZED: Use select_related to fetch user data in single query
+        pending_submissions = LinkedInSubmission.objects.filter(
+            status='pending'
+        ).select_related('user').order_by('-submitted_at')
+        
+        # OPTIMIZED: Build list in single pass, avoiding N+1 queries
+        submissions_data = []
+        for submission in pending_submissions:
+            submissions_data.append({
+                "id": submission.id,
+                "discord_id": submission.user.discord_id,
+                "username": submission.user.username,
+                "description": submission.linkedin_url,
+                "submitted_at": submission.submitted_at.isoformat(),
+            })
+        
+        return Response({
+            "success": True,
+            "pending_count": len(submissions_data),  # Use len() instead of count() query
             "submissions": submissions_data
         })
 

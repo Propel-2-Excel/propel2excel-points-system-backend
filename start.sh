@@ -5,6 +5,9 @@ set -e
 
 echo "🚀 Starting Propel2Excel services..."
 
+# Set RENDER environment variable for smart backend URL detection
+export RENDER=true
+
 # Run Django migrations
 echo "📦 Running Django migrations..."
 python manage.py migrate

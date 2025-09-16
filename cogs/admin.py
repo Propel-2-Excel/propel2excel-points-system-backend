@@ -828,67 +828,88 @@ class Admin(commands.Cog):
 
     @commands.command()
     @commands.has_permissions(administrator=True)
-    async def approveevent(self, ctx, member: commands.MemberConverter, *, notes: str = ""):
+    async def approveevent(self, ctx, submission_id: int, points: int, *, notes: str = ""):
         """Approve an event attendance submission and award points"""
         try:
-            success, result = await self.add_points(str(member.id), 15, f"Event attendance approved: {notes}")
+            # Call backend API to approve event
+            try:
+                from bot import BACKEND_API_URL, BOT_SHARED_SECRET
+                import aiohttp
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        f"{BACKEND_API_URL}/api/bot/",
+                        json={
+                            "action": "approve-event",
+                            "submission_id": submission_id,
+                            "points": points,
+                            "notes": notes
+                        },
+                        headers={"Content-Type": "application/json", "X-Bot-Secret": BOT_SHARED_SECRET},
+                    ) as resp:
+                        if resp.status != 200:
+                            await ctx.send("❌ Failed to approve event.")
+                            return
+                        result = await resp.json()
+            except Exception as e:
+                await ctx.send(f"❌ Error connecting to backend: {e}")
+                return
             
-            if success:
-                embed = discord.Embed(
-                    title="✅ Event Attendance Approved!",
-                    description=f"Event attendance has been approved and points awarded!",
-                    color=0x00ff00
-                )
-                
+            embed = discord.Embed(
+                title="✅ Event Attendance Approved!",
+                description=f"Event attendance has been approved and points awarded!",
+                color=0x00ff00
+            )
+            
+            embed.add_field(
+                name="📝 Submission ID",
+                value=f"**{submission_id}**",
+                inline=True
+            )
+            
+            embed.add_field(
+                name="🎯 Points Awarded",
+                value=f"**{points} points**",
+                inline=True
+            )
+            
+            embed.add_field(
+                name="📊 New Total",
+                value=f"**{result.get('total_points', 'N/A')} points**",
+                inline=True
+            )
+            
+            embed.add_field(
+                name="👨‍⚖️ Reviewed By",
+                value=ctx.author.display_name,
+                inline=True
+            )
+            
+            if notes:
                 embed.add_field(
-                    name="👤 User",
-                    value=member.mention,
-                    inline=True
+                    name="📝 Notes",
+                    value=notes,
+                    inline=False
                 )
-                
-                embed.add_field(
-                    name="🎯 Points Awarded",
-                    value=f"**15 points**",
-                    inline=True
-                )
-                
-                embed.add_field(
-                    name="📊 New Total",
-                    value=f"**{result} points**",
-                    inline=True
-                )
-                
-                embed.add_field(
-                    name="👨‍⚖️ Reviewed By",
-                    value=ctx.author.display_name,
-                    inline=True
-                )
-                
-                if notes:
-                    embed.add_field(
-                        name="📝 Notes",
-                        value=notes,
-                        inline=False
-                    )
-                
-                await ctx.send(embed=embed)
-                
-                # Notify the user
-                try:
+            
+            await ctx.send(embed=embed)
+            
+            # Notify the user
+            try:
+                user_id = result.get('user_id')
+                if user_id:
+                    user = await self.bot.fetch_user(int(user_id))
                     user_embed = discord.Embed(
                         title="🎉 Your Event Attendance Was Approved!",
                         description=f"Great news! Your event attendance has been approved by an admin.",
                         color=0x00ff00
                     )
-                    user_embed.add_field(name="🎯 Points Earned", value=f"**15** points", inline=True)
-                    user_embed.add_field(name="📊 Your New Total", value=f"**{result}** points", inline=True)
+                    user_embed.add_field(name="🎯 Points Earned", value=f"**{points}** points", inline=True)
+                    user_embed.add_field(name="📊 Your New Total", value=f"**{result.get('total_points', 'N/A')}** points", inline=True)
                     if notes:
                         user_embed.add_field(name="📝 Admin Notes", value=notes, inline=False)
-                    await member.send(embed=user_embed)
-                except discord.Forbidden:
-                    print(f"Could not send DM to user {member.id} for event approval.")
-            else:
-                await ctx.send(f"❌ Failed to approve event attendance: {result}")
+                    await user.send(embed=user_embed)
+            except Exception as e:
+                print(f"Could not notify user for event approval: {e}")
                 
         except Exception as e:
             await ctx.send(f"❌ Error approving event attendance: {e}")
@@ -896,9 +917,31 @@ class Admin(commands.Cog):
 
     @commands.command()
     @commands.has_permissions(administrator=True)
-    async def rejectevent(self, ctx, member: commands.MemberConverter, *, reason: str = "No reason provided"):
+    async def rejectevent(self, ctx, submission_id: int, *, reason: str = "No reason provided"):
         """Reject an event attendance submission"""
         try:
+            # Call backend API to reject event
+            try:
+                from bot import BACKEND_API_URL, BOT_SHARED_SECRET
+                import aiohttp
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        f"{BACKEND_API_URL}/api/bot/",
+                        json={
+                            "action": "reject-event",
+                            "submission_id": submission_id,
+                            "reason": reason
+                        },
+                        headers={"Content-Type": "application/json", "X-Bot-Secret": BOT_SHARED_SECRET},
+                    ) as resp:
+                        if resp.status != 200:
+                            await ctx.send("❌ Failed to reject event.")
+                            return
+                        result = await resp.json()
+            except Exception as e:
+                await ctx.send(f"❌ Error connecting to backend: {e}")
+                return
+            
             embed = discord.Embed(
                 title="❌ Event Attendance Rejected",
                 description=f"Event attendance submission has been rejected.",
@@ -906,8 +949,8 @@ class Admin(commands.Cog):
             )
             
             embed.add_field(
-                name="👤 User",
-                value=member.mention,
+                name="📝 Submission ID",
+                value=f"**{submission_id}**",
                 inline=True
             )
             
@@ -927,16 +970,19 @@ class Admin(commands.Cog):
             
             # Notify the user
             try:
-                user_embed = discord.Embed(
-                    title="🚫 Your Event Attendance Was Rejected",
-                    description=f"Unfortunately, your event attendance submission was not approved.",
-                    color=0xff0000
-                )
-                user_embed.add_field(name="📝 Reason", value=reason, inline=False)
-                user_embed.add_field(name="👨‍⚖️ Reviewed By", value=ctx.author.display_name, inline=True)
-                await member.send(embed=user_embed)
-            except discord.Forbidden:
-                print(f"Could not send DM to user {member.id} for event rejection.")
+                user_id = result.get('user_id')
+                if user_id:
+                    user = await self.bot.fetch_user(int(user_id))
+                    user_embed = discord.Embed(
+                        title="🚫 Your Event Attendance Was Rejected",
+                        description=f"Unfortunately, your event attendance submission was not approved.",
+                        color=0xff0000
+                    )
+                    user_embed.add_field(name="📝 Reason", value=reason, inline=False)
+                    user_embed.add_field(name="👨‍⚖️ Reviewed By", value=ctx.author.display_name, inline=True)
+                    await user.send(embed=user_embed)
+            except Exception as e:
+                print(f"Could not notify user for event rejection: {e}")
                 
         except Exception as e:
             await ctx.send(f"❌ Error rejecting event attendance: {e}")
@@ -944,67 +990,88 @@ class Admin(commands.Cog):
 
     @commands.command()
     @commands.has_permissions(administrator=True)
-    async def approvelinkedin(self, ctx, member: commands.MemberConverter, *, notes: str = ""):
+    async def approvelinkedin(self, ctx, submission_id: int, points: int, *, notes: str = ""):
         """Approve a LinkedIn update submission and award points"""
         try:
-            success, result = await self.add_points(str(member.id), 5, f"LinkedIn update approved: {notes}")
+            # Call backend API to approve LinkedIn
+            try:
+                from bot import BACKEND_API_URL, BOT_SHARED_SECRET
+                import aiohttp
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        f"{BACKEND_API_URL}/api/bot/",
+                        json={
+                            "action": "approve-linkedin",
+                            "submission_id": submission_id,
+                            "points": points,
+                            "notes": notes
+                        },
+                        headers={"Content-Type": "application/json", "X-Bot-Secret": BOT_SHARED_SECRET},
+                    ) as resp:
+                        if resp.status != 200:
+                            await ctx.send("❌ Failed to approve LinkedIn update.")
+                            return
+                        result = await resp.json()
+            except Exception as e:
+                await ctx.send(f"❌ Error connecting to backend: {e}")
+                return
             
-            if success:
-                embed = discord.Embed(
-                    title="✅ LinkedIn Update Approved!",
-                    description=f"LinkedIn update has been approved and points awarded!",
-                    color=0x00ff00
-                )
-                
+            embed = discord.Embed(
+                title="✅ LinkedIn Update Approved!",
+                description=f"LinkedIn update has been approved and points awarded!",
+                color=0x00ff00
+            )
+            
+            embed.add_field(
+                name="📝 Submission ID",
+                value=f"**{submission_id}**",
+                inline=True
+            )
+            
+            embed.add_field(
+                name="🎯 Points Awarded",
+                value=f"**{points} points**",
+                inline=True
+            )
+            
+            embed.add_field(
+                name="📊 New Total",
+                value=f"**{result.get('total_points', 'N/A')} points**",
+                inline=True
+            )
+            
+            embed.add_field(
+                name="👨‍⚖️ Reviewed By",
+                value=ctx.author.display_name,
+                inline=True
+            )
+            
+            if notes:
                 embed.add_field(
-                    name="👤 User",
-                    value=member.mention,
-                    inline=True
+                    name="📝 Notes",
+                    value=notes,
+                    inline=False
                 )
-                
-                embed.add_field(
-                    name="🎯 Points Awarded",
-                    value=f"**5 points**",
-                    inline=True
-                )
-                
-                embed.add_field(
-                    name="📊 New Total",
-                    value=f"**{result} points**",
-                    inline=True
-                )
-                
-                embed.add_field(
-                    name="👨‍⚖️ Reviewed By",
-                    value=ctx.author.display_name,
-                    inline=True
-                )
-                
-                if notes:
-                    embed.add_field(
-                        name="📝 Notes",
-                        value=notes,
-                        inline=False
-                    )
-                
-                await ctx.send(embed=embed)
-                
-                # Notify the user
-                try:
+            
+            await ctx.send(embed=embed)
+            
+            # Notify the user
+            try:
+                user_id = result.get('user_id')
+                if user_id:
+                    user = await self.bot.fetch_user(int(user_id))
                     user_embed = discord.Embed(
                         title="🎉 Your LinkedIn Update Was Approved!",
                         description=f"Great news! Your LinkedIn update has been approved by an admin.",
                         color=0x00ff00
                     )
-                    user_embed.add_field(name="🎯 Points Earned", value=f"**5** points", inline=True)
-                    user_embed.add_field(name="📊 Your New Total", value=f"**{result}** points", inline=True)
+                    user_embed.add_field(name="🎯 Points Earned", value=f"**{points}** points", inline=True)
+                    user_embed.add_field(name="📊 Your New Total", value=f"**{result.get('total_points', 'N/A')}** points", inline=True)
                     if notes:
                         user_embed.add_field(name="📝 Admin Notes", value=notes, inline=False)
-                    await member.send(embed=user_embed)
-                except discord.Forbidden:
-                    print(f"Could not send DM to user {member.id} for LinkedIn approval.")
-            else:
-                await ctx.send(f"❌ Failed to approve LinkedIn update: {result}")
+                    await user.send(embed=user_embed)
+            except Exception as e:
+                print(f"Could not notify user for LinkedIn approval: {e}")
                 
         except Exception as e:
             await ctx.send(f"❌ Error approving LinkedIn update: {e}")
@@ -1012,9 +1079,31 @@ class Admin(commands.Cog):
 
     @commands.command()
     @commands.has_permissions(administrator=True)
-    async def rejectlinkedin(self, ctx, member: commands.MemberConverter, *, reason: str = "No reason provided"):
+    async def rejectlinkedin(self, ctx, submission_id: int, *, reason: str = "No reason provided"):
         """Reject a LinkedIn update submission"""
         try:
+            # Call backend API to reject LinkedIn
+            try:
+                from bot import BACKEND_API_URL, BOT_SHARED_SECRET
+                import aiohttp
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        f"{BACKEND_API_URL}/api/bot/",
+                        json={
+                            "action": "reject-linkedin",
+                            "submission_id": submission_id,
+                            "reason": reason
+                        },
+                        headers={"Content-Type": "application/json", "X-Bot-Secret": BOT_SHARED_SECRET},
+                    ) as resp:
+                        if resp.status != 200:
+                            await ctx.send("❌ Failed to reject LinkedIn update.")
+                            return
+                        result = await resp.json()
+            except Exception as e:
+                await ctx.send(f"❌ Error connecting to backend: {e}")
+                return
+            
             embed = discord.Embed(
                 title="❌ LinkedIn Update Rejected",
                 description=f"LinkedIn update submission has been rejected.",
@@ -1022,8 +1111,8 @@ class Admin(commands.Cog):
             )
             
             embed.add_field(
-                name="👤 User",
-                value=member.mention,
+                name="📝 Submission ID",
+                value=f"**{submission_id}**",
                 inline=True
             )
             
@@ -1043,16 +1132,19 @@ class Admin(commands.Cog):
             
             # Notify the user
             try:
-                user_embed = discord.Embed(
-                    title="🚫 Your LinkedIn Update Was Rejected",
-                    description=f"Unfortunately, your LinkedIn update submission was not approved.",
-                    color=0xff0000
-                )
-                user_embed.add_field(name="📝 Reason", value=reason, inline=False)
-                user_embed.add_field(name="👨‍⚖️ Reviewed By", value=ctx.author.display_name, inline=True)
-                await member.send(embed=user_embed)
-            except discord.Forbidden:
-                print(f"Could not send DM to user {member.id} for LinkedIn rejection.")
+                user_id = result.get('user_id')
+                if user_id:
+                    user = await self.bot.fetch_user(int(user_id))
+                    user_embed = discord.Embed(
+                        title="🚫 Your LinkedIn Update Was Rejected",
+                        description=f"Unfortunately, your LinkedIn update submission was not approved.",
+                        color=0xff0000
+                    )
+                    user_embed.add_field(name="📝 Reason", value=reason, inline=False)
+                    user_embed.add_field(name="👨‍⚖️ Reviewed By", value=ctx.author.display_name, inline=True)
+                    await user.send(embed=user_embed)
+            except Exception as e:
+                print(f"Could not notify user for LinkedIn rejection: {e}")
                 
         except Exception as e:
             await ctx.send(f"❌ Error rejecting LinkedIn update: {e}")
