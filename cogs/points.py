@@ -17,11 +17,20 @@ class ApprovalModal(discord.ui.Modal):
         self.bot_instance = bot_instance
         self.action_type = action_type
         
+        # Set default points based on submission type
+        default_points = "10"  # Default fallback
+        if submission_type.lower() == "event":
+            default_points = "15"
+        elif submission_type.lower() == "resource":
+            default_points = "10"
+        elif submission_type.lower() == "linkedin":
+            default_points = "5"
+        
         # Add points input
         self.points_input = discord.ui.TextInput(
             label="Points to Award",
-            placeholder="Enter points (e.g., 10)",
-            default="10",
+            placeholder=f"Enter points (default: {default_points})",
+            default=default_points,
             required=True,
             max_length=3
         )
@@ -722,11 +731,133 @@ class Points(commands.Cog):
 
     @commands.command()
     @commands.cooldown(1, 10, commands.BucketType.user)  # 1 use per 10 seconds per user
-    async def event(self, ctx, *, event_name: str = "Event Attendance"):
-        """Submit event attendance for admin review and potential points"""
+    async def event(self, ctx, *, description: str = ""):
+        """Submit event attendance for admin review and potential points
+        
+        Usage: !event <description> (with photo attachment)
+        Example: !event "Attended the Python workshop on web scraping and learned about beautiful soup"
+        """
         try:
+            # Check if user provided a description
+            if not description:
+                embed = discord.Embed(
+                    title="❌ Missing Event Description",
+                    description="Please provide a description of the event you attended.",
+                    color=0xff0000
+                )
+                embed.add_field(
+                    name="📝 Usage",
+                    value="`!event <description>` (with photo attachment)",
+                    inline=False
+                )
+                embed.add_field(
+                    name="💡 Example",
+                    value="`!event \"Attended the Python workshop on web scraping and learned about beautiful soup\"`",
+                    inline=False
+                )
+                embed.add_field(
+                    name="📋 What to Include",
+                    value="• What event you attended\n• What you learned or gained\n• Why it was valuable",
+                    inline=False
+                )
+                embed.add_field(
+                    name="📸 Photo Required",
+                    value="**You must attach a photo/screenshot** to prove your attendance!",
+                    inline=False
+                )
+                await ctx.send(embed=embed)
+                return
+            
+            # Check if description is too short
+            if len(description) < 15:
+                embed = discord.Embed(
+                    title="❌ Description Too Short",
+                    description="Please provide a more detailed description (at least 15 characters).",
+                    color=0xff0000
+                )
+                embed.add_field(
+                    name="📝 Current Description",
+                    value=f"\"{description}\"",
+                    inline=False
+                )
+                embed.add_field(
+                    name="💡 Make it Better",
+                    value="• Add what event you attended\n• Explain what you learned\n• Mention why it was valuable",
+                    inline=False
+                )
+                embed.add_field(
+                    name="📋 Example",
+                    value="`!event \"Attended the comprehensive Python workshop that taught web scraping with beautiful soup and requests libraries\"`",
+                    inline=False
+                )
+                await ctx.send(embed=embed)
+                return
+            
+            # Check if user attached a photo
+            if not ctx.message.attachments:
+                embed = discord.Embed(
+                    title="❌ Photo Required",
+                    description="You must attach a photo/screenshot to prove your event attendance.",
+                    color=0xff0000
+                )
+                embed.add_field(
+                    name="📸 What to Attach",
+                    value="• Screenshot of the event (virtual events)\n• Photo at the event location\n• Certificate of attendance\n• Event registration confirmation",
+                    inline=False
+                )
+                embed.add_field(
+                    name="💡 How to Attach",
+                    value="1. Take a photo/screenshot\n2. Drag and drop it into Discord\n3. Type your `!event` command",
+                    inline=False
+                )
+                embed.add_field(
+                    name="📋 Example",
+                    value="`!event \"Attended the Python workshop on web scraping\"` (with photo attached)",
+                    inline=False
+                )
+                await ctx.send(embed=embed)
+                return
+            
+            # Validate the attached image
+            attachment = ctx.message.attachments[0]
+            
+            # Check file size (max 8MB for Discord)
+            if attachment.size > 8 * 1024 * 1024:
+                embed = discord.Embed(
+                    title="❌ Image Too Large",
+                    description="The attached image is too large. Please use an image smaller than 8MB.",
+                    color=0xff0000
+                )
+                embed.add_field(
+                    name="📸 Try Again",
+                    value="• Compress the image\n• Take a new screenshot\n• Use a smaller photo",
+                    inline=False
+                )
+                await ctx.send(embed=embed)
+                return
+            
+            # Check if it's a valid image type
+            valid_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp']
+            if not any(attachment.filename.lower().endswith(ext) for ext in valid_extensions):
+                embed = discord.Embed(
+                    title="❌ Invalid Image Format",
+                    description="Please attach a valid image file (JPG, PNG, GIF, or WebP).",
+                    color=0xff0000
+                )
+                embed.add_field(
+                    name="📸 Supported Formats",
+                    value="• JPG/JPEG\n• PNG\n• GIF\n• WebP",
+                    inline=False
+                )
+                await ctx.send(embed=embed)
+                return
+            
+            # Combine description with image info for backend submission
+            image_info = f"Image: {attachment.filename} ({attachment.size} bytes)"
+            full_description = f"{description}\n\n{image_info}"
+            
             # Submit event to backend
-            success, submission_id = await self.submit_event_to_backend(str(ctx.author.id), event_name)
+            success, submission_id = await self.submit_event_to_backend(str(ctx.author.id), full_description)
             
             if not success:
                 await ctx.send("❌ Failed to submit event attendance to backend. Please try again later.")
@@ -740,8 +871,14 @@ class Points(commands.Cog):
             )
             
             embed.add_field(
-                name="🎪 Event",
-                value=event_name,
+                name="📝 Event Description",
+                value=f"**{description[:200]}{'...' if len(description) > 200 else ''}**",
+                inline=False
+            )
+            
+            embed.add_field(
+                name="📸 Proof Attached",
+                value=f"✅ **{attachment.filename}**",
                 inline=True
             )
             
@@ -765,10 +902,13 @@ class Points(commands.Cog):
             
             embed.set_footer(text="Thank you for participating in our events!")
             
+            # Set the attached image as embed image
+            embed.set_image(url=attachment.url)
+            
             await ctx.send(embed=embed)
             
-            # Forward to admin channel for review
-            await self.forward_to_admin_channel(ctx, "Event", "", event_name, submission_id)
+            # Forward to admin channel for review (with image URL)
+            await self.forward_to_admin_channel(ctx, "Event", description, attachment.url, submission_id)
             
         except Exception as e:
             await ctx.send("❌ An error occurred while submitting your event attendance.")
@@ -776,15 +916,67 @@ class Points(commands.Cog):
 
     @commands.command()
     @commands.cooldown(1, 10, commands.BucketType.user)  # 1 use per 10 seconds per user
-    async def resource(self, ctx, *, description):
-        """Share a resource for +10 points"""
+    async def resource(self, ctx, *, args: str = ""):
+        """Submit a resource for admin review and potential points
+        
+        Usage: !resource <description>
+        Example: !resource "Found this amazing Python tutorial that covers web scraping basics"
+        """
         try:
+            # Parse the arguments
+            description = args.strip()
+            
             # Check if user provided a description
-            if not description or len(description.strip()) < 10:
-                await ctx.send("❌ Please provide a detailed description of your resource (at least 10 characters).\n\n**Usage:** `!resource <description of the resource you want to share>`")
+            if not description:
+                embed = discord.Embed(
+                    title="❌ Missing Resource Description",
+                    description="Please provide a description of the resource you want to share.",
+                    color=0xff0000
+                )
+                embed.add_field(
+                    name="📝 Usage",
+                    value="`!resource <description>`",
+                    inline=False
+                )
+                embed.add_field(
+                    name="💡 Example",
+                    value="`!resource \"Found this amazing Python tutorial that covers web scraping basics\"`",
+                    inline=False
+                )
+                embed.add_field(
+                    name="📋 What to Include",
+                    value="• What the resource is (tutorial, tool, article, etc.)\n• What it teaches or provides\n• Why it's valuable to the community",
+                    inline=False
+                )
+                await ctx.send(embed=embed)
                 return
             
-            # Save resource submission to backend
+            # Check if description is too short
+            if len(description) < 15:
+                embed = discord.Embed(
+                    title="❌ Description Too Short",
+                    description="Please provide a more detailed description (at least 15 characters).",
+                    color=0xff0000
+                )
+                embed.add_field(
+                    name="📝 Current Description",
+                    value=f"\"{description}\"",
+                    inline=False
+                )
+                embed.add_field(
+                    name="💡 Make it Better",
+                    value="• Add what type of resource it is\n• Explain what it teaches or provides\n• Mention why it's useful",
+                    inline=False
+                )
+                embed.add_field(
+                    name="📋 Example",
+                    value="`!resource \"Found this comprehensive Python tutorial that teaches web scraping with beautiful soup and requests libraries\"`",
+                    inline=False
+                )
+                await ctx.send(embed=embed)
+                return
+            
+            # Submit resource to backend
             success, submission_id = await self.submit_resource_to_backend(str(ctx.author.id), description)
             
             if not success:
@@ -799,8 +991,8 @@ class Points(commands.Cog):
             )
             
             embed.add_field(
-                name="📝 Description",
-                value=description[:1000] + "..." if len(description) > 1000 else description,
+                name="📝 Resource Description",
+                value=f"**{description[:200]}{'...' if len(description) > 200 else ''}**",
                 inline=False
             )
             
@@ -911,6 +1103,10 @@ class Points(commands.Cog):
                     value=additional_info,
                     inline=False
                 )
+            
+            # For events, set the image if additional_info is an image URL
+            if submission_type.lower() == "event" and additional_info and additional_info.startswith("http"):
+                embed.set_image(url=additional_info)
             
             embed.set_footer(text=f"Channel: #{ctx.channel.name} | Server: {ctx.guild.name}")
             
