@@ -26,7 +26,23 @@ logger = logging.getLogger(__name__)
 # Load environment variables
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
-BACKEND_API_URL = os.getenv('BACKEND_API_URL', 'http://localhost:8000')  # Default backend URL
+
+def get_backend_url():
+    """Smart backend URL selection based on environment"""
+    # Check if BACKEND_API_URL is explicitly set
+    explicit_url = os.getenv('BACKEND_API_URL')
+    if explicit_url:
+        return explicit_url
+    
+    # For Render deployment, use localhost when bot and backend are in same container
+    if os.getenv('RENDER'):
+        port = os.getenv('PORT', '8000')
+        return f'http://127.0.0.1:{port}'
+    
+    # Default to localhost for local development
+    return 'http://localhost:8000'
+
+BACKEND_API_URL = get_backend_url()
 BOT_SHARED_SECRET = os.getenv('BOT_SHARED_SECRET', '')
 
 # Bot setup
@@ -161,7 +177,7 @@ async def update_user_points_in_backend(discord_id: str, points: int, action: st
                     "X-Bot-Secret": BOT_SHARED_SECRET,
                 }
             ) as response:
-                if response.status == 200:
+                if response.status in (200, 201):
                     logger.info(f"✅ Successfully updated points for user {discord_id} in backend")
                     return True
                 else:
@@ -176,9 +192,6 @@ async def update_user_points_in_backend(discord_id: str, points: int, action: st
 async def load_cogs():
     """Load all cogs with proper error handling"""
     global cogs_loaded
-    if cogs_loaded:
-        logger.info("Cogs already loaded, skipping...")
-        return []
     
     loaded_cogs = []
     os.makedirs('cogs', exist_ok=True)
@@ -226,9 +239,12 @@ async def on_ready():
     if not db_success:
         logger.error("❌ Failed to setup database, bot may not function properly")
     
-    # Load cogs
-    loaded_cogs = await load_cogs()
-    logger.info(f"🎯 All cogs loaded successfully! ({len(loaded_cogs)} cogs)")
+    # Load cogs only if not already loaded
+    if not cogs_loaded:
+        loaded_cogs = await load_cogs()
+        logger.info(f"🎯 All cogs loaded successfully! ({len(loaded_cogs)} cogs)")
+    else:
+        logger.info(f"🎯 Cogs already loaded ({len(bot.cogs)} cogs)")
     
     # Set bot status
     await bot.change_presence(
@@ -408,12 +424,48 @@ async def status(ctx):
         embed.add_field(name="Commands", value=len(bot.commands), inline=True)
         embed.add_field(name="Uptime", value=f"<t:{int(bot.start_time.timestamp())}:R>", inline=True)
         
+        # Show cog names
+        cog_names = list(bot.cogs.keys())
+        embed.add_field(name="Cog Names", value=", ".join(cog_names) if cog_names else "None", inline=False)
+        
         await ctx.send(embed=embed)
         logger.info(f"Status command used by {ctx.author} in {ctx.guild.name}")
         
     except Exception as e:
         logger.error(f"Error in status command: {e}")
         await ctx.send("❌ An error occurred while processing the status command.")
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def reloadcogs(ctx):
+    """Reload all cogs (Admin only)"""
+    try:
+        global cogs_loaded
+        
+        # Unload all cogs first
+        for cog_name in list(bot.cogs.keys()):
+            await bot.unload_extension(f'cogs.{cog_name}')
+            logger.info(f"Unloaded cog: {cog_name}")
+        
+        # Reset the loaded flag
+        cogs_loaded = False
+        
+        # Reload all cogs
+        loaded_cogs = await load_cogs()
+        
+        embed = discord.Embed(
+            title="🔄 Cogs Reloaded",
+            description=f"Successfully reloaded {len(loaded_cogs)} cogs",
+            color=0x00ff00
+        )
+        embed.add_field(name="Loaded Cogs", value=", ".join(loaded_cogs), inline=False)
+        
+        await ctx.send(embed=embed)
+        logger.info(f"Cogs reloaded by {ctx.author} in {ctx.guild.name}")
+        
+    except Exception as e:
+        logger.error(f"Error reloading cogs: {e}")
+        await ctx.send(f"❌ Error reloading cogs: {e}")
 
 @bot.command()
 async def welcome(ctx):
@@ -719,7 +771,7 @@ async def link(ctx, code: str = None):
                     "X-Bot-Secret": BOT_SHARED_SECRET,
                 }
             ) as response:
-                if response.status == 200:
+                if response.status in (200, 201):
                     data = await response.json()
                     if data.get('verified'):
                         await ctx.send("✅ Successfully verified and linked your Discord account to your website account!")

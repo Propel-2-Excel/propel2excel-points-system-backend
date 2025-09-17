@@ -448,9 +448,71 @@ class ResourceSubmission(models.Model):
     class Meta:
         db_table = 'resource_submissions'
         ordering = ['-submitted_at']
+        indexes = [
+            models.Index(fields=['status', '-submitted_at'], name='idx_resource_status_submitted'),
+            models.Index(fields=['user', 'status'], name='idx_resource_user_status'),
+        ]
     
     def __str__(self):
         return f"{self.user.username} - {self.description[:50]}... ({self.status})"
+
+
+class EventSubmission(models.Model):
+    """User-submitted event attendance for admin review and potential points"""
+    STATUS_CHOICES = [
+        ('pending', 'Pending Review'),
+        ('approved', 'Approved'),
+        ('rejected', 'Rejected'),
+    ]
+    
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='event_submissions')
+    event_details = models.TextField(blank=True, default="User claims to have attended an event")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    points_awarded = models.IntegerField(default=0)
+    admin_notes = models.TextField(blank=True, null=True)
+    submitted_at = models.DateTimeField(auto_now_add=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    reviewed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='reviewed_events')
+    
+    class Meta:
+        db_table = 'event_submissions'
+        ordering = ['-submitted_at']
+        indexes = [
+            models.Index(fields=['status', '-submitted_at'], name='idx_event_status_submitted'),
+            models.Index(fields=['user', 'status'], name='idx_event_user_status'),
+        ]
+    
+    def __str__(self):
+        return f"{self.user.username} - Event ({self.status})"
+
+
+class LinkedInSubmission(models.Model):
+    """User-submitted LinkedIn updates for admin review and potential points"""
+    STATUS_CHOICES = [
+        ('pending', 'Pending Review'),
+        ('approved', 'Approved'),
+        ('rejected', 'Rejected'),
+    ]
+    
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='linkedin_submissions')
+    linkedin_url = models.TextField(blank=True, default="User claims to have posted a LinkedIn update")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    points_awarded = models.IntegerField(default=0)
+    admin_notes = models.TextField(blank=True, null=True)
+    submitted_at = models.DateTimeField(auto_now_add=True)
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    reviewed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='reviewed_linkedin')
+    
+    class Meta:
+        db_table = 'linkedin_submissions'
+        ordering = ['-submitted_at']
+        indexes = [
+            models.Index(fields=['status', '-submitted_at'], name='idx_linkedin_status_submitted'),
+            models.Index(fields=['user', 'status'], name='idx_linkedin_user_status'),
+        ]
+    
+    def __str__(self):
+        return f"{self.user.username} - LinkedIn Update ({self.status})"
 
 
 class UserPreferences(models.Model):

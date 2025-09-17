@@ -9,7 +9,15 @@ import os
 class ResumeReview(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.backend_url = os.getenv('BACKEND_API_URL', 'http://localhost:8000')
+        # Use smart backend URL detection (same logic as bot.py)
+        explicit_url = os.getenv('BACKEND_API_URL')
+        if explicit_url:
+            self.backend_url = explicit_url
+        elif os.getenv('RENDER'):
+            port = os.getenv('PORT', '8000')
+            self.backend_url = f'http://127.0.0.1:{port}'
+        else:
+            self.backend_url = 'http://localhost:8000'
         self.bot_secret = os.getenv('BOT_SHARED_SECRET', '')
         self.form_url = "https://forms.gle/EKHLrqhHwt1bGQjd6"
 
