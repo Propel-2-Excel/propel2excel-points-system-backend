@@ -300,7 +300,7 @@ async def on_member_join(member):
         # Create personalized welcome embed
         embed = discord.Embed(
             title=f"🎉 Welcome to Propel2Excel, {member.display_name}!",
-            description="You've joined an amazing community of students and professionals!",
+            description="Here's your personalized welcome message!",
             color=0x00ff00
         )
         
@@ -312,25 +312,19 @@ async def on_member_join(member):
         
         embed.add_field(
             name="💰 Points System",
-            value="Earn points for activities like:\n• Sending messages (+1 pt daily)\n• Reacting to posts (+2 pts)\n• Professional resume review (process)\n• Attending events (+15 pts)\n• Sharing resources (+10 pts)\n• LinkedIn updates (+5 pts)",
+            value="Earn points for activities like:\n• Sending messages (+1 pt daily)\n• Attending events (+15 pts)\n• Sharing resources (+10 pts)\n• LinkedIn updates (+5 pts)",
             inline=False
         )
         
         embed.add_field(
             name="🎯 Unlockable Incentives",
-            value="**50 points** → Azure Certification\n**75 points** → Resume Review\n**100 points** → Hackathon\n\n*You'll receive a DM when you unlock each incentive!*",
+            value="**For incentives, ask student to sign up on our frontend to see**\n\n[Visit our Student Dashboard](https://propel2excel-student-dashboard.vercel.app)",
             inline=False
         )
         
         embed.add_field(
             name="🚀 Getting Started",
-            value="• Use `!pointshelp` to see all user commands\n• Use `!points` to check your points\n• Use `!milestones` to see available incentives\n• Use `!leaderboard` to see top performers",
-            inline=False
-        )
-        
-        embed.add_field(
-            name="📋 Quick Commands",
-            value="`!resume` - Upload resume (+20 pts)\n`!event` - Mark attendance (+15 pts)\n`!resource <description>` - Submit resource for review (+10 pts if approved)\n`!linkedin <link>` - Submit LinkedIn post for review (+5 pts if approved)",
+            value="• Use `!pointshelp` to see all user commands\n• Use `!points` to check your points\n• Use `!resume` to upload resume for review\n• Use `!event <description>` to mark event attendance\n• Use `!resource <description>` to submit resources\n• Use `!linkedin <link>` to submit LinkedIn updates",
             inline=False
         )
         
@@ -339,25 +333,6 @@ async def on_member_join(member):
         
         # Send the personalized welcome DM
         await member.send(embed=embed)
-        
-        # Also send a simple text message as backup
-        welcome_text = (
-            f"Hi {member.display_name}! 👋\n\n"
-            "Welcome to the Propel2Excel Discord community!\n\n"
-            "**You've just joined a community where every interaction helps you grow!**\n\n"
-            "Start earning points right away by:\n"
-            "• Sending messages (+1 point daily)\n"
-            "• Reacting to posts (+2 points each)\n"
-            "• Using commands like `!resume` (professional review), `!event`, `!resource`, `!linkedin <link>`\n\n"
-            "**Unlock real incentives:**\n"
-            "• 50 points = Azure Certification\n"
-            "• 75 points = Resume Review\n"
-            "• 100 points = Hackathon\n\n"
-            "Try `!pointshelp` to see all available commands!\n"
-            "Welcome aboard! 🚀"
-        )
-        
-        await member.send(welcome_text)
         
         logger.info(f"✅ Sent personalized welcome DM to {member.display_name} ({member.id}) and registered with backend")
         
@@ -469,7 +444,7 @@ async def reloadcogs(ctx):
 
 @bot.command()
 async def welcome(ctx):
-    """Send welcome message again"""
+    """Send welcome message again as DM"""
     try:
         embed = discord.Embed(
             title=f"🎉 Welcome to Propel2Excel, {ctx.author.display_name}!",
@@ -485,26 +460,33 @@ async def welcome(ctx):
         
         embed.add_field(
             name="💰 Points System",
-            value="Earn points for activities like:\n• Sending messages (+1 pt daily)\n• Reacting to posts (+2 pts)\n• Professional resume review (process)\n• Attending events (+15 pts)\n• Sharing resources (+10 pts)\n• LinkedIn updates (+5 pts)",
+            value="Earn points for activities like:\n• Sending messages (+1 pt daily)\n• Attending events (+15 pts)\n• Sharing resources (+10 pts)\n• LinkedIn updates (+5 pts)",
             inline=False
         )
         
         embed.add_field(
             name="🎯 Unlockable Incentives",
-            value="**50 points** → Azure Certification\n**75 points** → Resume Review\n**100 points** → Hackathon\n\n*You'll receive a DM when you unlock each incentive!*",
+            value="**For incentives, ask student to sign up on our frontend to see**\n\n[Visit our Student Dashboard](https://propel2excel-student-dashboard.vercel.app)",
             inline=False
         )
         
         embed.add_field(
             name="🚀 Getting Started",
-            value="• Use `!pointshelp` to see all user commands\n• Use `!points` to check your points\n• Use `!milestones` to see available incentives\n• Use `!leaderboard` to see top performers",
+            value="• Use `!pointshelp` to see all user commands\n• Use `!points` to check your points\n• Use `!resume` to upload resume for review\n• Use `!event <description>` to mark event attendance\n• Use `!resource <description>` to submit resources\n• Use `!linkedin <link>` to submit LinkedIn updates",
             inline=False
         )
         
         embed.set_footer(text="Welcome aboard! We're excited to see you grow with us! 🚀")
         embed.set_thumbnail(url=ctx.author.display_avatar.url if ctx.author.display_avatar else None)
         
-        await ctx.send(embed=embed)
+        # Send as DM instead of in channel
+        try:
+            await ctx.author.send(embed=embed)
+            await ctx.send(f"✅ {ctx.author.mention} Check your DMs for the welcome message!")
+        except discord.Forbidden:
+            # If DMs are disabled, send in channel as fallback
+            await ctx.send(embed=embed)
+        
         logger.info(f"Welcome command used by {ctx.author} in {ctx.guild.name}")
         
     except Exception as e:
@@ -519,7 +501,7 @@ async def sendwelcome(ctx, member: discord.Member):
         # Create personalized welcome embed
         embed = discord.Embed(
             title=f"🎉 Welcome to Propel2Excel, {member.display_name}!",
-            description="You've joined an amazing community of students and professionals!",
+            description="Here's your personalized welcome message!",
             color=0x00ff00
         )
         
@@ -531,19 +513,19 @@ async def sendwelcome(ctx, member: discord.Member):
         
         embed.add_field(
             name="💰 Points System",
-            value="Earn points for activities like:\n• Sending messages (+1 pt daily)\n• Reacting to posts (+2 pts)\n• Professional resume review (process)\n• Attending events (+15 pts)\n• Sharing resources (+10 pts)\n• LinkedIn updates (+5 pts)",
+            value="Earn points for activities like:\n• Sending messages (+1 pt daily)\n• Attending events (+15 pts)\n• Sharing resources (+10 pts)\n• LinkedIn updates (+5 pts)",
             inline=False
         )
         
         embed.add_field(
             name="🎯 Unlockable Incentives",
-            value="**50 points** → Azure Certification\n**75 points** → Resume Review\n**100 points** → Hackathon\n\n*You'll receive a DM when you unlock each incentive!*",
+            value="**For incentives, ask student to sign up on our frontend to see**\n\n[Visit our Student Dashboard](https://propel2excel-student-dashboard.vercel.app)",
             inline=False
         )
         
         embed.add_field(
             name="🚀 Getting Started",
-            value="• Use `!pointshelp` to see all user commands\n• Use `!points` to check your points\n• Use `!milestones` to see available incentives\n• Use `!leaderboard` to see top performers",
+            value="• Use `!pointshelp` to see all user commands\n• Use `!points` to check your points\n• Use `!resume` to upload resume for review\n• Use `!event <description>` to mark event attendance\n• Use `!resource <description>` to submit resources\n• Use `!linkedin <link>` to submit LinkedIn updates",
             inline=False
         )
         
