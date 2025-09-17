@@ -247,10 +247,10 @@ async def on_ready():
         logger.info(f"🎯 Cogs already loaded ({len(bot.cogs)} cogs)")
     
     # Set bot status
-    await bot.change_presence(
+        await bot.change_presence(
         activity=discord.Activity(
             type=discord.ActivityType.watching,
-            name=f"!help | {len(bot.guilds)} servers"
+            name=f"!pointshelp | {len(bot.guilds)} servers"
         )
     )
 
@@ -324,7 +324,7 @@ async def on_member_join(member):
         
         embed.add_field(
             name="🚀 Getting Started",
-            value="• Use `!help` to see all commands\n• Use `!points` to check your points\n• Use `!milestones` to see available incentives\n• Use `!leaderboard` to see top performers",
+            value="• Use `!pointshelp` to see all user commands\n• Use `!points` to check your points\n• Use `!milestones` to see available incentives\n• Use `!leaderboard` to see top performers",
             inline=False
         )
         
@@ -353,7 +353,7 @@ async def on_member_join(member):
             "• 50 points = Azure Certification\n"
             "• 75 points = Resume Review\n"
             "• 100 points = Hackathon\n\n"
-            "Try `!help` to see all available commands!\n"
+            "Try `!pointshelp` to see all available commands!\n"
             "Welcome aboard! 🚀"
         )
         
@@ -497,7 +497,7 @@ async def welcome(ctx):
         
         embed.add_field(
             name="🚀 Getting Started",
-            value="• Use `!help` to see all commands\n• Use `!points` to check your points\n• Use `!milestones` to see available incentives\n• Use `!leaderboard` to see top performers",
+            value="• Use `!pointshelp` to see all user commands\n• Use `!points` to check your points\n• Use `!milestones` to see available incentives\n• Use `!leaderboard` to see top performers",
             inline=False
         )
         
@@ -543,7 +543,7 @@ async def sendwelcome(ctx, member: discord.Member):
         
         embed.add_field(
             name="🚀 Getting Started",
-            value="• Use `!help` to see all commands\n• Use `!points` to check your points\n• Use `!milestones` to see available incentives\n• Use `!leaderboard` to see top performers",
+            value="• Use `!pointshelp` to see all user commands\n• Use `!points` to check your points\n• Use `!milestones` to see available incentives\n• Use `!leaderboard` to see top performers",
             inline=False
         )
         
@@ -593,51 +593,67 @@ async def registeruser(ctx, member: discord.Member):
         logger.error(f"Error in registeruser command: {e}")
 
 @bot.command()
-async def help(ctx):
-    """Show available commands"""
+async def pointshelp(ctx):
+    """Show available user commands for points and activities"""
     try:
         embed = discord.Embed(
-            title="🤖 Propel2Excel Bot Commands",
-            description="Complete list of all available commands",
+            title="🎯 Propel2Excel User Commands",
+            description="Commands available to all users for earning and tracking points",
             color=0x0099ff
+        )
+        
+        # Main Earning Methods - PROMINENT
+        embed.add_field(
+            name="💰 MAIN WAYS TO EARN POINTS",
+            value="**1. Daily Messaging:** Send messages in group chat = **+1 point per day**\n\n"
+                  "**2. Submit Event Attendance:** `!event <description>` + **photo attachment** = **+15 points** (if approved)\n"
+                  "   📸 **Required:** Photo proof of attendance\n"
+                  "   📝 **Example:** `!event \"Attended Python workshop on web scraping\"`\n\n"
+                  "**3. Share Resources:** `!resource <description>` = **+10 points** (if approved)\n"
+                  "   📚 **For:** Tutorials, tools, articles, courses that help the community\n"
+                  "   📝 **Example:** `!resource \"Found this amazing Python tutorial for beginners\"`\n\n"
+                  "**4. LinkedIn Engagement:** `!linkedin <url> <description>` = **+5 points** (if approved)\n"
+                  "   💼 **For:** Sharing P2E content, engaging with our posts, professional updates\n"
+                  "   📝 **Example:** `!linkedin https://linkedin.com/posts/... \"Liked and commented on P2E's career tips\"`",
+            inline=False
+        )
+        
+        # Add spacing
+        embed.add_field(
+            name="\u200b",  # Zero-width space for spacing
+            value="\u200b",  # Zero-width space for spacing
+            inline=False
         )
         
         # User Commands - Core
         embed.add_field(
-            name="👤 User Commands - Core",
+            name="👤 Core Commands",
             value="`!points` - Check your current points\n"
                   "`!pointshistory` - View your recent point-earning activities\n"
                   "`!pointvalues` - See point values for different activities\n"
                   "`!rank [user]` - Show user's rank and points\n"
-                  "`!milestones` - Show available incentives and progress\n"
-                  "`!streak` - Track your engagement streaks\n"
-                  "`!leaderboard [category]` - Show leaderboards (total, networking, learning, events, resources)",
+                  "`!streak` - Track your engagement streaks",
             inline=False
         )
         
-        # Activity & Earning Commands
+        # Add spacing
         embed.add_field(
-            name="🎯 Activity & Earning Commands",
-            value="`!resume` - Start resume review process (+20 pts process)\n"
-                  "`!event <details>` - Submit event attendance for review (+15 pts if approved)\n"
-                  "`!resource <description>` - Submit a resource for review (+10 pts if approved)\n"
-                  "`!linkedin <url>` - Submit LinkedIn post for review (+5 pts if approved)",
-            inline=False
-        )
-        
-        # Shop & Rewards
-        embed.add_field(
-            name="🛍️ Shop & Rewards",
-            value="`!shop` - View available incentives and rewards\n"
-                  "`!redeem <id>` - Redeem an incentive with your points",
+            name="\u200b",  # Zero-width space for spacing
+            value="\u200b",  # Zero-width space for spacing
             inline=False
         )
         
         # Resume Review System
         embed.add_field(
             name="📋 Resume Review System",
-            value="`!review_status` - Check the status of your review request\n"
-                  "`!list_professionals` - List available professionals (Admin)",
+            value="`!review_status` - Check the status of your review request",
+            inline=False
+        )
+        
+        # Add spacing
+        embed.add_field(
+            name="\u200b",  # Zero-width space for spacing
+            value="\u200b",  # Zero-width space for spacing
             inline=False
         )
         
@@ -647,13 +663,69 @@ async def help(ctx):
             value="`!link <6-digit-code>` - Link Discord account with website\n"
                   "`!ping` - Test bot connectivity\n"
                   "`!welcome` - Show welcome message again\n"
-                  "`!help` - Show this help message",
+                  "`!pointshelp` - Show this help message",
             inline=False
+        )
+        
+        # Add spacing
+        embed.add_field(
+            name="\u200b",  # Zero-width space for spacing
+            value="\u200b",  # Zero-width space for spacing
+            inline=False
+        )
+        
+        # Coming Soon Features
+        embed.add_field(
+            name="🚧 Coming Soon",
+            value="`!leaderboard [category]` - Show leaderboards (total, networking, learning, events, resources)\n"
+                  "`!milestones` - Show available incentives and progress\n"
+                  "`!shop` - View available incentives and rewards\n"
+                  "`!redeem <id>` - Redeem an incentive with your points\n"
+                  "`!levelup` - Show progress toward next tier/badge (placeholder)\n"
+                  "`!badge` - Display earned career/professional badges (placeholder)",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="📊 Quick Summary",
+            value="**User Commands:** 20+ commands available\n"
+                  "**Prefix:** Use `!` before each command\n"
+                  "**Admin Commands:** Use `!adminhelp` (Admin only)\n"
+                  "**Examples:** `!points`, `!leaderboard networking`, `!redeem 1`",
+            inline=False
+        )
+        
+        embed.set_footer(text="Start earning points and unlock amazing incentives! 🎉")
+        
+        try:
+            # Send help as DM to avoid cluttering the channel
+            await ctx.author.send(embed=embed)
+            # Send a brief confirmation in the channel
+            await ctx.send(f"✅ {ctx.author.mention} Check your DMs for the complete help guide!")
+        except discord.Forbidden:
+            # If DMs are disabled, send in channel as fallback
+            await ctx.send(embed=embed)
+        
+        logger.info(f"Points help command used by {ctx.author} in {ctx.guild.name}")
+        
+    except Exception as e:
+        logger.error(f"Error in pointshelp command: {e}")
+        await ctx.send("❌ An error occurred while processing the help command.")
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def adminhelp(ctx):
+    """Show available admin commands (Admin only)"""
+    try:
+        embed = discord.Embed(
+            title="⚙️ Propel2Excel Admin Commands",
+            description="Administrative commands for managing the points system",
+            color=0xff6b35
         )
         
         # Admin Commands - Points Management
         embed.add_field(
-            name="⚙️ Admin Commands - Points Management",
+            name="⚙️ Points Management",
             value="`!addpoints <member> <amount>` - Add points to a user\n"
                   "`!removepoints <member> <amount>` - Remove points from a user\n"
                   "`!resetpoints <member>` - Reset a user's points to zero\n"
@@ -665,7 +737,7 @@ async def help(ctx):
         
         # Admin Commands - Statistics & Monitoring
         embed.add_field(
-            name="📊 Admin Commands - Statistics & Monitoring",
+            name="📊 Statistics & Monitoring",
             value="`!stats` - Show bot statistics and activity\n"
                   "`!topusers [limit]` - Show top users by points\n"
                   "`!activitylog [hours]` - Show recent activity log\n"
@@ -676,7 +748,7 @@ async def help(ctx):
         
         # Admin Commands - Submission Reviews
         embed.add_field(
-            name="📋 Admin Commands - Submission Reviews",
+            name="📋 Submission Reviews",
             value="`!pendingresources` - View pending resource submissions\n"
                   "`!pendingevents` - View pending event submissions\n"
                   "`!pendinglinkedin` - View pending LinkedIn submissions\n"
@@ -691,7 +763,7 @@ async def help(ctx):
         
         # Admin Commands - Reward Management
         embed.add_field(
-            name="🎁 Admin Commands - Reward Management",
+            name="🎁 Reward Management",
             value="`!rewards` - View all rewards and their status\n"
                   "`!enable_reward <name>` - Restock a reward (sets to 10)\n"
                   "`!disable_reward <name>` - Make reward out of stock\n"
@@ -701,7 +773,7 @@ async def help(ctx):
         
         # Admin Commands - Resume Review Management
         embed.add_field(
-            name="📝 Admin Commands - Resume Review Management",
+            name="📝 Resume Review Management",
             value="`!add_professional <name> <specialties>` - Add professional to pool\n"
                   "`!match_review <user> <professional>` - Match student with professional\n"
                   "`!review_stats` - Show resume review statistics\n"
@@ -713,7 +785,7 @@ async def help(ctx):
         
         # Admin Commands - User Management
         embed.add_field(
-            name="👥 Admin Commands - User Management",
+            name="👥 User Management",
             value="`!sendwelcome <member>` - Manually send welcome DM\n"
                   "`!registeruser <member>` - Manually register user with backend\n"
                   "`!checkmilestones [user]` - Manually check user milestones\n"
@@ -721,31 +793,32 @@ async def help(ctx):
             inline=False
         )
         
-        # Coming Soon Features
+        # Admin Commands - System Management
         embed.add_field(
-            name="🚧 Coming Soon",
-            value="`!levelup` - Show progress toward next tier/badge (placeholder)\n"
-                  "`!badge` - Display earned career/professional badges (placeholder)",
+            name="🔧 System Management",
+            value="`!reloadcogs` - Reload all bot cogs\n"
+                  "`!adminreport` - Manually trigger admin report\n"
+                  "`!list_professionals` - List available professionals",
             inline=False
         )
         
         embed.add_field(
-            name="📊 Command Summary",
-            value="**Total Commands:** 50+ (22 User/General + 28+ Admin)\n"
-                  "**Prefix:** Use `!` before each command\n"
-                  "**Admin Commands:** Require Administrator permissions\n"
-                  "**Examples:** `!points`, `!leaderboard networking`, `!redeem 1`",
+            name="📊 Admin Summary",
+            value="**Admin Commands:** 30+ commands available\n"
+                  "**Permissions:** Administrator role required\n"
+                  "**User Commands:** Use `!pointshelp` for user commands\n"
+                  "**Examples:** `!pendingresources`, `!addpoints @user 50`, `!stats`",
             inline=False
         )
         
-        embed.set_footer(text="All commands are fully implemented and ready to use! 🎉")
+        embed.set_footer(text="Admin commands - Use responsibly! 🛡️")
         
         await ctx.send(embed=embed)
-        logger.info(f"Help command used by {ctx.author} in {ctx.guild.name}")
+        logger.info(f"Admin help command used by {ctx.author} in {ctx.guild.name}")
         
     except Exception as e:
-        logger.error(f"Error in help command: {e}")
-        await ctx.send("❌ An error occurred while processing the help command.")
+        logger.error(f"Error in adminhelp command: {e}")
+        await ctx.send("❌ An error occurred while processing the admin help command.")
 
 
 @bot.command()
