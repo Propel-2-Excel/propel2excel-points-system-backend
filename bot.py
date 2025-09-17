@@ -317,8 +317,8 @@ async def on_member_join(member):
         )
         
         embed.add_field(
-            name="🎯 Unlockable Incentives",
-            value="**🎁 Our Student Dashboard has everything you need:**\n• View all available rewards and incentives\n• Check your point balance and transaction history\n• Redeem rewards with your earned points\n• Track your progress and achievements\n\n**📝 You must sign up on our frontend to access these features!**\n\n[🚀 Sign Up & Access Dashboard](https://propel2excel-student-dashboard.vercel.app)",
+            name="🎁 Student Dashboard",
+            value="**Our Student Dashboard has everything you need:**\n• View all available rewards and incentives\n• Check your point balance and transaction history\n• Redeem rewards with your earned points\n• Track your progress and achievements\n\n**📝 You must sign up on our frontend to access these features!**\n\n[🎁 Sign Up & Access Dashboard](https://propel2excel-student-dashboard.vercel.app)\n",
             inline=False
         )
         
@@ -465,8 +465,8 @@ async def welcome(ctx):
         )
         
         embed.add_field(
-            name="🎯 Unlockable Incentives",
-            value="**🎁 Our Student Dashboard has everything you need:**\n• View all available rewards and incentives\n• Check your point balance and transaction history\n• Redeem rewards with your earned points\n• Track your progress and achievements\n\n**📝 You must sign up on our frontend to access these features!**\n\n[🚀 Sign Up & Access Dashboard](https://propel2excel-student-dashboard.vercel.app)",
+            name="🎁 Student Dashboard",
+            value="**Our Student Dashboard has everything you need:**\n• View all available rewards and incentives\n• Check your point balance and transaction history\n• Redeem rewards with your earned points\n• Track your progress and achievements\n\n**📝 You must sign up on our frontend to access these features!**\n\n[🎁 Sign Up & Access Dashboard](https://propel2excel-student-dashboard.vercel.app)\n",
             inline=False
         )
         
@@ -518,8 +518,8 @@ async def sendwelcome(ctx, member: discord.Member):
         )
         
         embed.add_field(
-            name="🎯 Unlockable Incentives",
-            value="**🎁 Our Student Dashboard has everything you need:**\n• View all available rewards and incentives\n• Check your point balance and transaction history\n• Redeem rewards with your earned points\n• Track your progress and achievements\n\n**📝 You must sign up on our frontend to access these features!**\n\n[🚀 Sign Up & Access Dashboard](https://propel2excel-student-dashboard.vercel.app)",
+            name="🎁 Student Dashboard",
+            value="**Our Student Dashboard has everything you need:**\n• View all available rewards and incentives\n• Check your point balance and transaction history\n• Redeem rewards with your earned points\n• Track your progress and achievements\n\n**📝 You must sign up on our frontend to access these features!**\n\n[🎁 Sign Up & Access Dashboard](https://propel2excel-student-dashboard.vercel.app)\n",
             inline=False
         )
         
