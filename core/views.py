@@ -1809,6 +1809,8 @@ class BotIntegrationView(APIView):
             return self._reject_linkedin(request)
         if action == "pending-linkedin":
             return self._pending_linkedin(request)
+        if action == "get-streak":
+            return self._get_streak(request)
 
         return Response({"error": "Unknown action"}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -2971,6 +2973,74 @@ class BotIntegrationView(APIView):
             "success": True,
             "pending_count": len(submissions_data),  # Use len() instead of count() query
             "submissions": submissions_data
+        })
+
+    def _get_streak(self, request):
+        """Get user's engagement streak data"""
+        discord_id = request.data.get("discord_id")
+        
+        try:
+            user = User.objects.get(discord_id=discord_id)
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+        
+        from datetime import datetime, timedelta
+        from django.db.models import Count
+        
+        # Calculate current streak
+        current_streak = 0
+        longest_streak = 0
+        last_activity = "Never"
+        
+        # Get user's activity logs ordered by date
+        activity_logs = PointsLog.objects.filter(
+            user=user
+        ).extra(
+            select={'date': "DATE(timestamp)"}
+        ).values('date').annotate(
+            count=Count('id')
+        ).order_by('-date')
+        
+        if activity_logs:
+            # Calculate current streak
+            today = timezone.now().date()
+            consecutive_days = 0
+            
+            for log in activity_logs:
+                log_date = log['date']
+                days_diff = (today - log_date).days
+                
+                if days_diff == consecutive_days:
+                    consecutive_days += 1
+                elif days_diff == consecutive_days + 1:
+                    # Allow for 1 day gap (weekend, etc.)
+                    consecutive_days += 1
+                else:
+                    break
+            
+            current_streak = consecutive_days
+            
+            # Calculate longest streak (simplified - could be more sophisticated)
+            longest_streak = max(current_streak, len(activity_logs))
+            
+            # Get last activity date
+            last_log = activity_logs.first()
+            if last_log:
+                last_activity = last_log['date'].strftime("%Y-%m-%d")
+        
+        # Calculate streak bonus (bonus points for streaks)
+        streak_bonus = 0
+        if current_streak >= 7:
+            streak_bonus = 5  # 5 bonus points for 7+ day streak
+        elif current_streak >= 3:
+            streak_bonus = 2  # 2 bonus points for 3+ day streak
+        
+        return Response({
+            "current_streak": current_streak,
+            "longest_streak": longest_streak,
+            "streak_type": "daily",
+            "last_activity": last_activity,
+            "streak_bonus": streak_bonus
         })
 
 

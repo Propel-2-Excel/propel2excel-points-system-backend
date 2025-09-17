@@ -1423,38 +1423,22 @@ class Points(commands.Cog):
     @commands.cooldown(1, 5, commands.BucketType.user)  # 1 use per 5 seconds per user
     async def milestones(self, ctx):
         """Show available milestones and user's progress"""
-        try:
-            current_points, achieved_milestones = await self.fetch_user_milestones(str(ctx.author.id))
-            
-            embed = discord.Embed(
-                title="🏆 Available Incentives & Milestones",
-                description=f"{ctx.author.mention}'s progress towards unlocking incentives:",
-                color=0x0099ff
-            )
-            
-            embed.add_field(
-                name="Current Points",
-                value=f"**{current_points} points**",
-                inline=False
-            )
-            
-            # Show each milestone with status
-            for points_required, milestone_name in sorted(MILESTONES.items()):
-                status = "✅ Unlocked" if milestone_name in achieved_milestones else "🔒 Locked"
-                progress = f"{current_points}/{points_required} points"
-                
-                embed.add_field(
-                    name=f"{milestone_name} ({points_required} pts)",
-                    value=f"{status}\n{progress}",
-                    inline=True
-                )
-            
-            embed.set_footer(text="Keep earning points to unlock more incentives!")
-            await ctx.send(embed=embed)
-            
-        except Exception as e:
-            await ctx.send("❌ An error occurred while fetching milestone information.")
-            print(f"Error in milestones command: {e}")
+        embed = discord.Embed(
+            title="🚧 Feature in Development",
+            description="The milestones feature is currently being developed and will be available soon!",
+            color=0xffaa00
+        )
+        embed.add_field(
+            name="What's Coming",
+            value="• View your progress towards incentives\n• Track milestone achievements\n• See available rewards",
+            inline=False
+        )
+        embed.add_field(
+            name="Stay Tuned",
+            value="We're working hard to bring you an amazing milestone tracking experience!",
+            inline=False
+        )
+        await ctx.send(embed=embed)
 
     @commands.command()
     @commands.has_permissions(administrator=True)
@@ -2020,6 +2004,10 @@ class Points(commands.Cog):
                 "action": "get-streak",
                 "discord_id": user_id
             })
+            
+            if not response:
+                await ctx.send("❌ Failed to fetch streak data from backend.")
+                return
             
             current_streak = response.get('current_streak', 0)
             longest_streak = response.get('longest_streak', 0)
