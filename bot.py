@@ -247,7 +247,7 @@ async def on_ready():
         logger.info(f"🎯 Cogs already loaded ({len(bot.cogs)} cogs)")
     
     # Set bot status
-        await bot.change_presence(
+    await bot.change_presence(
         activity=discord.Activity(
             type=discord.ActivityType.watching,
             name=f"!pointshelp | {len(bot.guilds)} servers"

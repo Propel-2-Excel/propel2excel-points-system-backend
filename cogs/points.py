@@ -83,7 +83,7 @@ class ApprovalModal(discord.ui.Modal):
                 await interaction.response.send_message(embed=embed)
                 
                 # Notify the user
-                await self.bot_instance.notify_user_of_approval(self.user_id, points, notes)
+                await self.bot_instance.notify_user_of_approval(self.user_id, points, notes, self.submission_type)
             else:
                 await interaction.response.send_message(f"❌ Failed to approve: {result}", ephemeral=True)
                 
@@ -144,7 +144,7 @@ class RejectionModal(discord.ui.Modal):
                 await interaction.response.send_message(embed=embed)
                 
                 # Notify the user
-                await self.bot_instance.notify_user_of_rejection(self.user_id, reason)
+                await self.bot_instance.notify_user_of_rejection(self.user_id, reason, self.submission_type)
             else:
                 await interaction.response.send_message(f"❌ Failed to reject: {result}", ephemeral=True)
                 
@@ -1522,7 +1522,7 @@ class Points(commands.Cog):
             await ctx.send(embed=embed)
             
             # Notify the user about the approval
-            await self.notify_user_of_approval(result.get('user_id'), points, notes)
+            await self.notify_user_of_approval(result.get('user_id'), points, notes, "Resource")
             
         except Exception as e:
             await ctx.send(f"❌ Error approving resource: {e}")
@@ -1573,7 +1573,7 @@ class Points(commands.Cog):
             await ctx.send(embed=embed)
             
             # Notify the user about the rejection
-            await self.notify_user_of_rejection(result.get('user_id'), reason)
+            await self.notify_user_of_rejection(result.get('user_id'), reason, "Resource")
             
         except Exception as e:
             await ctx.send(f"❌ Error rejecting resource: {e}")
@@ -1926,14 +1926,17 @@ class Points(commands.Cog):
                 # Wait 5 minutes before retrying
                 await asyncio.sleep(300)
 
-    async def notify_user_of_approval(self, user_id: str, points: int, notes: str):
-        """Notify user that their resource was approved"""
+    async def notify_user_of_approval(self, user_id: str, points: int, notes: str, submission_type: str = "Resource"):
+        """Notify user that their submission was approved"""
         try:
             user = self.bot.get_user(int(user_id))
             if user:
+                # Capitalize the submission type for display
+                display_type = submission_type.capitalize()
+                
                 embed = discord.Embed(
-                    title="🎉 Your Resource Was Approved!",
-                    description="Congratulations! Your resource submission has been approved!",
+                    title=f"🎉 Your {display_type} Was Approved!",
+                    description=f"Congratulations! Your {submission_type.lower()} submission has been approved!",
                     color=0x00ff00
                 )
                 
@@ -1963,14 +1966,17 @@ class Points(commands.Cog):
         except Exception as e:
             print(f"Error notifying user of approval: {e}")
 
-    async def notify_user_of_rejection(self, user_id: str, reason: str):
-        """Notify user that their resource was rejected"""
+    async def notify_user_of_rejection(self, user_id: str, reason: str, submission_type: str = "Resource"):
+        """Notify user that their submission was rejected"""
         try:
             user = self.bot.get_user(int(user_id))
             if user:
+                # Capitalize the submission type for display
+                display_type = submission_type.capitalize()
+                
                 embed = discord.Embed(
-                    title="❌ Resource Submission Rejected",
-                    description="Your resource submission has been reviewed and rejected.",
+                    title=f"❌ {display_type} Submission Rejected",
+                    description=f"Your {submission_type.lower()} submission has been reviewed and rejected.",
                     color=0xff0000
                 )
                 
@@ -1980,13 +1986,23 @@ class Points(commands.Cog):
                     inline=False
                 )
                 
+                # Provide specific tips based on submission type
+                if submission_type.lower() == "resource":
+                    tips = "• Make sure your resource is relevant and valuable\n• Provide a clear, detailed description\n• Ensure the resource is accessible and legitimate\n• Try submitting a different resource!"
+                elif submission_type.lower() == "event":
+                    tips = "• Make sure you attended the event and have photo proof\n• Provide a clear description of what you learned\n• Ensure the event was relevant to professional development\n• Try submitting attendance for a different event!"
+                elif submission_type.lower() == "linkedin":
+                    tips = "• Make sure you actually engaged with P2E content on LinkedIn\n• Provide a clear description of your interaction\n• Ensure the LinkedIn post is legitimate and relevant\n• Try engaging with different P2E content!"
+                else:
+                    tips = "• Review the submission requirements\n• Provide more detailed information\n• Ensure your submission meets the criteria\n• Try submitting again with improvements!"
+                
                 embed.add_field(
                     name="💡 Tips",
-                    value="• Make sure your resource is relevant and valuable\n• Provide a clear, detailed description\n• Ensure the resource is accessible and legitimate\n• Try submitting a different resource!",
+                    value=tips,
                     inline=False
                 )
                 
-                embed.set_footer(text="Don't give up! Try submitting another resource.")
+                embed.set_footer(text=f"Don't give up! Try submitting another {submission_type.lower()}.")
                 
                 await user.send(embed=embed)
                 
