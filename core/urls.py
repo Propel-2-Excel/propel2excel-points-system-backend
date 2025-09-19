@@ -9,7 +9,7 @@ from .views import (
     UserViewSet, TrackViewSet, ActivityViewSet, PointsLogViewSet,
     IncentiveViewSet, RedemptionViewSet, UserStatusViewSet,
     ProfessionalViewSet, ReviewRequestViewSet, ScheduledSessionViewSet, ProfessionalAvailabilityViewSet,
-    UserPreferencesViewSet
+    UserPreferencesViewSet, PartnerMetricsViewSet
 )
 
 router = DefaultRouter()
@@ -25,6 +25,7 @@ router.register(r'review-requests', ReviewRequestViewSet, basename='reviewreques
 router.register(r'scheduled-sessions', ScheduledSessionViewSet, basename='scheduledsession')
 router.register(r'professional-availability', ProfessionalAvailabilityViewSet, basename='professionalavailability')
 router.register(r'user-preferences', UserPreferencesViewSet, basename='userpreferences')
+router.register(r'partner-metrics', PartnerMetricsViewSet, basename='partnermetrics')
 
 urlpatterns = [
     # IMPORTANT: Specific API endpoints MUST come BEFORE router.urls to avoid conflicts

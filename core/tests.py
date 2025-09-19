@@ -144,6 +144,7 @@ class PointsSystemTestCase(APITestCase):
 
     def test_get_incentives(self):
         """Test getting available incentives"""
+        self.client.force_authenticate(user=self.user)
         url = reverse('incentive-list')
         
         response = self.client.get(url)

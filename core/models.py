@@ -538,3 +538,55 @@ class UserPreferences(models.Model):
     
     def __str__(self):
         return f"Preferences for {self.user.username}"
+
+
+class DiscordEventLog(models.Model):
+    """Logs raw, individual events from the Discord server."""
+    EVENT_CHOICES = [
+        ('message', 'Message Sent'),
+        ('reaction_add', 'Reaction Added'),
+        ('voice_join', 'Voice Channel Join'),
+    ]
+
+    event_type = models.CharField(max_length=20, choices=EVENT_CHOICES, help_text="The type of event that occurred.")
+    user_id = models.CharField(max_length=50, help_text="Discord user ID of the user who triggered the event.")
+    channel_id = models.CharField(max_length=50, null=True, blank=True, help_text="Discord channel ID where the event occurred.")
+    message_id = models.CharField(max_length=50, null=True, blank=True, help_text="Discord message ID relevant to the event.")
+    emoji = models.CharField(max_length=100, null=True, blank=True, help_text="Emoji used in a reaction.")
+    timestamp = models.DateTimeField(auto_now_add=True, help_text="Timestamp of when the event was logged.")
+    metadata = models.JSONField(null=True, blank=True, help_text="Additional context for the event (e.g., message content).")
+
+    class Meta:
+        db_table = 'discord_event_logs'
+        ordering = ['-timestamp']
+        indexes = [
+            models.Index(fields=['event_type', 'timestamp']),
+            models.Index(fields=['user_id']),
+        ]
+
+    def __str__(self):
+        return f"{self.event_type} by {self.user_id} at {self.timestamp}"
+
+
+class PartnerMetrics(models.Model):
+    """Stores aggregated daily KPI metrics for the partner dashboard."""
+    date = models.DateField(unique=True, help_text="The date for which these metrics are calculated.")
+    total_active_users = models.IntegerField(default=0, help_text="Total unique users who performed any action.")
+    total_messages_sent = models.IntegerField(default=0, help_text="Total number of messages sent by users.")
+
+    # Brand Equity Metrics
+    brand_mentions_company_a = models.IntegerField(default=0, help_text="Mentions of 'AcmeCorp'.")
+    event_attendees_company_a = models.IntegerField(default=0, help_text="Attendees for company A's events.")
+
+    # Talent Pipeline Metrics
+    engaged_students = models.IntegerField(default=0, help_text="Students showing high engagement.")
+    resume_ready_students = models.IntegerField(default=0, help_text="Students who have uploaded resumes.")
+    interview_prepped_students = models.IntegerField(default=0, help_text="Students who have participated in interview prep.")
+
+    class Meta:
+        db_table = 'partner_metrics'
+        ordering = ['-date']
+        verbose_name_plural = "Partner Metrics"
+
+    def __str__(self):
+        return f"Metrics for {self.date}"

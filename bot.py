@@ -245,6 +245,13 @@ async def on_ready():
         logger.info(f"🎯 All cogs loaded successfully! ({len(loaded_cogs)} cogs)")
     else:
         logger.info(f"🎯 Cogs already loaded ({len(bot.cogs)} cogs)")
+
+    # Explicitly load the event_logger cog
+    try:
+        await bot.load_extension('cogs.event_logger')
+        logger.info("✅ Successfully loaded event_logger cog")
+    except Exception as e:
+        logger.error(f"❌ Failed to load event_logger cog: {e}")
     
     # Set bot status
     await bot.change_presence(

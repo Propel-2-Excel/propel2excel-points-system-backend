@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import User, Track, Activity, PointsLog, Incentive, Redemption, UserStatus, UserIncentiveUnlock, DiscordLinkCode, Professional, ReviewRequest, ScheduledSession, ProfessionalAvailability, UserPreferences
+from .models import User, Track, Activity, PointsLog, Incentive, Redemption, UserStatus, UserIncentiveUnlock, DiscordLinkCode, Professional, ReviewRequest, ScheduledSession, ProfessionalAvailability, UserPreferences, PartnerMetrics
 
 class TrackSerializer(serializers.ModelSerializer):
     """Serializer for Track model"""
@@ -264,3 +264,10 @@ class UserPreferencesSerializer(serializers.ModelSerializer):
             'display_preferences', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'user', 'created_at', 'updated_at']
+
+
+class PartnerMetricsSerializer(serializers.ModelSerializer):
+    """Serializer for the PartnerMetrics model."""
+    class Meta:
+        model = PartnerMetrics
+        fields = '__all__'

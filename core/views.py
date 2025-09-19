@@ -13,13 +13,14 @@ import logging
 import requests
 
 logger = logging.getLogger(__name__)
-from .models import User, Track, Activity, PointsLog, Incentive, Redemption, UserStatus, UserIncentiveUnlock, DiscordLinkCode, Professional, ReviewRequest, ScheduledSession, ProfessionalAvailability, ResourceSubmission, EventSubmission, LinkedInSubmission, UserPreferences
+from .models import User, Track, Activity, PointsLog, Incentive, Redemption, UserStatus, UserIncentiveUnlock, DiscordLinkCode, Professional, ReviewRequest, ScheduledSession, ProfessionalAvailability, ResourceSubmission, EventSubmission, LinkedInSubmission, UserPreferences, PartnerMetrics
 from .serializers import (
     UserSerializer, TrackSerializer, ActivitySerializer, PointsLogSerializer,
     IncentiveSerializer, RedemptionSerializer, UserStatusSerializer, DiscordLinkCodeSerializer,
     ProfessionalSerializer, ReviewRequestSerializer, ReviewRequestCreateSerializer,
     ScheduledSessionSerializer, ProfessionalAvailabilitySerializer,
-    DiscordValidationSerializer, DiscordValidationResponseSerializer, UserPreferencesSerializer
+    DiscordValidationSerializer, DiscordValidationResponseSerializer, UserPreferencesSerializer,
+    PartnerMetricsSerializer
 )
 
 def invalidate_user_caches(user_id):
@@ -1702,6 +1703,13 @@ class UserPreferencesViewSet(viewsets.ModelViewSet):
                 'sync_activities': True  # This could be a preference
             }
         })
+
+
+class PartnerMetricsViewSet(viewsets.ReadOnlyModelViewSet):
+    """Read-only ViewSet for partner metrics."""
+    queryset = PartnerMetrics.objects.all().order_by('-date')
+    serializer_class = PartnerMetricsSerializer
+    permission_classes = [permissions.IsAuthenticated] # Or more restrictive
 
 
 class BotIntegrationView(APIView):
