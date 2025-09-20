@@ -123,12 +123,12 @@ def create_sample_incentives():
             'image_url': 'https://via.placeholder.com/300x200?text=Starbucks+Gift+Card'
         },
         {
-            'name': '1-on-1 Career Coaching Session',
-            'description': '60-minute personalized career coaching session',
+            'name': '1:1 Career Coaching Sessions',
+            'description': 'Paired up with a volunteered champion who serves as coach to help you land your dream role and company',
             'points_required': 500,
             'category': 'services',
             'sponsor': 'P2E Career Services',
-            'stock_available': 8,
+            'stock_available': 50,
             'image_url': 'https://via.placeholder.com/300x200?text=Career+Coaching'
         },
         {
@@ -151,12 +151,30 @@ def create_sample_incentives():
         },
         {
             'name': 'Resume Template Bundle',
-            'description': 'Professional resume templates (digital download)',
+            'description': '3 Resumes that landed offers in your company and role of interest',
             'points_required': 150,
             'category': 'digital',
             'sponsor': 'P2E Resources',
             'stock_available': 999,
             'image_url': 'https://via.placeholder.com/300x200?text=Resume+Templates'
+        },
+        {
+            'name': 'Azure E-Learning',
+            'description': 'Educational materials and training to gain the necessary knowledge to obtain a certification',
+            'points_required': 50,
+            'category': 'digital',
+            'sponsor': 'Microsoft',
+            'stock_available': 999,
+            'image_url': 'https://via.placeholder.com/300x200?text=Azure+E-Learning'
+        },
+        {
+            'name': 'Azure Exam Vouchers',
+            'description': 'Free exam voucher code to sit for your certification exam',
+            'points_required': 100,
+            'category': 'digital',
+            'sponsor': 'Microsoft',
+            'stock_available': 50,
+            'image_url': 'https://via.placeholder.com/300x200?text=Azure+Exam+Voucher'
         }
     ]
     

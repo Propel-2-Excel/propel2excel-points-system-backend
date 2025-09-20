@@ -53,22 +53,32 @@ def create_initial_data(apps, schema_editor):
     # Create initial incentives
     incentives = [
         {
-            'name': 'Azure Certification',
-            'description': 'Free Azure certification voucher',
+            'name': 'Azure E-Learning',
+            'description': 'Educational materials and training to gain the necessary knowledge to obtain a certification',
             'points_required': 50,
-            'sponsor': 'Microsoft'
+            'sponsor': 'Microsoft',
+            'stock_available': 999
         },
         {
-            'name': 'Hackathon Entry',
-            'description': 'Exclusive hackathon entry opportunity',
+            'name': 'Azure Exam Vouchers',
+            'description': 'Free exam voucher code to sit for your certification exam',
             'points_required': 100,
-            'sponsor': 'Propel2Excel'
+            'sponsor': 'Microsoft',
+            'stock_available': 50
         },
         {
-            'name': 'Resume Review',
-            'description': 'Professional resume review by industry expert',
-            'points_required': 75,
-            'sponsor': 'Career Services'
+            'name': 'Resume Template Bundle',
+            'description': '3 Resumes that landed offers in your company and role of interest',
+            'points_required': 150,
+            'sponsor': 'P2E Resources',
+            'stock_available': 999
+        },
+        {
+            'name': '1:1 Career Coaching Sessions',
+            'description': 'Paired up with a volunteered champion who serves as coach to help you land your dream role and company',
+            'points_required': 500,
+            'sponsor': 'P2E Career Services',
+            'stock_available': 50
         }
     ]
     

@@ -1327,5 +1327,304 @@ class Admin(commands.Cog):
         except Exception as e:
             await ctx.send(f"❌ Error updating stock: {str(e)}")
 
+    @commands.command()
+    @commands.has_permissions(administrator=True)
+    async def add_reward(self, ctx, points: int, stock: int, *, reward_info: str):
+        """Add a new reward/incentive
+        
+        Usage: !add_reward <points> <stock> "<name> | <description> | <category> | <sponsor>"
+        Example: !add_reward 100 50 "New T-Shirt | Official P2E branded t-shirt | merchandise | Propel2Excel"
+        """
+        try:
+            # Parse the reward info string
+            parts = [part.strip() for part in reward_info.split('|')]
+            if len(parts) < 2:
+                await ctx.send("❌ Invalid format. Use: `!add_reward <points> <stock> \"<name> | <description> | <category> | <sponsor>\"`")
+                return
+            
+            name = parts[0]
+            description = parts[1]
+            category = parts[2] if len(parts) > 2 else "other"
+            sponsor = parts[3] if len(parts) > 3 else "Propel2Excel"
+            
+            from bot import BACKEND_API_URL, BOT_SHARED_SECRET
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{BACKEND_API_URL}/api/bot/",
+                    json={
+                        "action": "create-incentive",
+                        "name": name,
+                        "description": description,
+                        "points_required": points,
+                        "stock_available": stock,
+                        "category": category,
+                        "sponsor": sponsor
+                    },
+                    headers={"Content-Type": "application/json", "X-Bot-Secret": BOT_SHARED_SECRET},
+                ) as resp:
+                    if resp.status != 200:
+                        text = await resp.text()
+                        await ctx.send(f"❌ Failed to create reward: {text[:200]}")
+                        return
+                    data = await resp.json()
+                    if not data.get('success'):
+                        await ctx.send(f"❌ Failed to create reward: {data.get('error', 'Unknown error')}")
+                        return
+                
+                embed = discord.Embed(
+                    title="🎁 New Reward Created",
+                    description=f"Successfully created **{name}**",
+                    color=0x00ff00
+                )
+                embed.add_field(name="Name", value=name, inline=True)
+                embed.add_field(name="Description", value=description, inline=False)
+                embed.add_field(name="Points Required", value=f"{points} pts", inline=True)
+                embed.add_field(name="Stock", value=str(stock), inline=True)
+                embed.add_field(name="Category", value=category.title(), inline=True)
+                embed.add_field(name="Sponsor", value=sponsor, inline=True)
+                
+                await ctx.send(embed=embed)
+                
+        except Exception as e:
+            await ctx.send(f"❌ Error creating reward: {str(e)}")
+
+    @commands.command()
+    @commands.has_permissions(administrator=True)
+    async def delete_reward(self, ctx, *, reward_name: str):
+        """Delete a reward/incentive
+        
+        Usage: !delete_reward <reward_name>
+        Example: !delete_reward "Old T-Shirt"
+        """
+        try:
+            from bot import BACKEND_API_URL, BOT_SHARED_SECRET
+            
+            # First, find the reward by name
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f"{BACKEND_API_URL}/api/incentives/admin_list/",
+                    headers={"X-Bot-Secret": BOT_SHARED_SECRET},
+                ) as resp:
+                    if resp.status != 200:
+                        await ctx.send("❌ Failed to fetch rewards.")
+                        return
+                    rewards = await resp.json()
+            
+            # Find matching reward
+            matches = []
+            for reward in rewards:
+                if reward_name.lower() in reward.get('name', '').lower():
+                    matches.append(reward)
+            
+            if not matches:
+                await ctx.send(f"❌ No reward found matching '{reward_name}'")
+                return
+            
+            if len(matches) > 1:
+                # Multiple matches - show options
+                embed = discord.Embed(
+                    title="🔍 Multiple Matches Found",
+                    description=f"Found {len(matches)} rewards matching '{reward_name}':",
+                    color=0xffa500
+                )
+                for i, reward in enumerate(matches[:5], 1):
+                    embed.add_field(
+                        name=f"{i}. {reward.get('name')}",
+                        value=f"ID: {reward.get('id')} | {reward.get('points_required')} pts | Stock: {reward.get('stock_available')}",
+                        inline=False
+                    )
+                embed.add_field(
+                    name="Usage",
+                    value="Use the exact name or ID to delete: `!delete_reward \"Exact Name\"`",
+                    inline=False
+                )
+                await ctx.send(embed=embed)
+                return
+            
+            # Single match found - proceed with deletion
+            reward = matches[0]
+            reward_id = reward.get('id')
+            reward_name = reward.get('name')
+            
+            # Confirm deletion
+            embed = discord.Embed(
+                title="⚠️ Confirm Deletion",
+                description=f"Are you sure you want to delete **{reward_name}**?",
+                color=0xff6b35
+            )
+            embed.add_field(name="Points Required", value=f"{reward.get('points_required')} pts", inline=True)
+            embed.add_field(name="Stock Available", value=str(reward.get('stock_available')), inline=True)
+            embed.add_field(name="Category", value=reward.get('category', 'other').title(), inline=True)
+            embed.set_footer(text="This action cannot be undone!")
+            
+            confirm_msg = await ctx.send(embed=embed)
+            await confirm_msg.add_reaction("✅")
+            await confirm_msg.add_reaction("❌")
+            
+            def check(reaction, user):
+                return user == ctx.author and str(reaction.emoji) in ["✅", "❌"] and reaction.message.id == confirm_msg.id
+            
+            try:
+                reaction, user = await self.bot.wait_for('reaction_add', timeout=30.0, check=check)
+                
+                if str(reaction.emoji) == "✅":
+                    # Proceed with deletion
+                    async with session.post(
+                        f"{BACKEND_API_URL}/api/bot/",
+                        json={
+                            "action": "delete-incentive",
+                            "incentive_id": reward_id
+                        },
+                        headers={"Content-Type": "application/json", "X-Bot-Secret": BOT_SHARED_SECRET},
+                    ) as resp:
+                        if resp.status != 200:
+                            text = await resp.text()
+                            await ctx.send(f"❌ Failed to delete reward: {text[:200]}")
+                            return
+                        data = await resp.json()
+                        if not data.get('success'):
+                            await ctx.send(f"❌ Failed to delete reward: {data.get('error', 'Unknown error')}")
+                            return
+                    
+                    success_embed = discord.Embed(
+                        title="🗑️ Reward Deleted",
+                        description=f"Successfully deleted **{reward_name}**",
+                        color=0xff0000
+                    )
+                    await ctx.send(embed=success_embed)
+                else:
+                    await ctx.send("❌ Deletion cancelled.")
+                    
+            except asyncio.TimeoutError:
+                await ctx.send("⏰ Deletion confirmation timed out.")
+                
+        except Exception as e:
+            await ctx.send(f"❌ Error deleting reward: {str(e)}")
+
+    @commands.command()
+    @commands.has_permissions(administrator=True)
+    async def edit_reward(self, ctx, *, edit_info: str):
+        """Edit a reward/incentive
+        
+        Usage: !edit_reward "<reward_name> | <field> | <new_value>"
+        Fields: name, description, points, category, sponsor
+        Example: !edit_reward "T-Shirt | points | 150"
+        Example: !edit_reward "T-Shirt | description | Updated description"
+        """
+        try:
+            # Parse the edit info string
+            parts = [part.strip() for part in edit_info.split('|')]
+            if len(parts) != 3:
+                await ctx.send("❌ Invalid format. Use: `!edit_reward \"<reward_name> | <field> | <new_value>\"`")
+                return
+            
+            reward_name, field, new_value = parts
+            
+            # Validate field
+            valid_fields = ['name', 'description', 'points', 'category', 'sponsor']
+            if field.lower() not in valid_fields:
+                await ctx.send(f"❌ Invalid field. Valid fields: {', '.join(valid_fields)}")
+                return
+            
+            from bot import BACKEND_API_URL, BOT_SHARED_SECRET
+            
+            # First, find the reward by name
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f"{BACKEND_API_URL}/api/incentives/admin_list/",
+                    headers={"X-Bot-Secret": BOT_SHARED_SECRET},
+                ) as resp:
+                    if resp.status != 200:
+                        await ctx.send("❌ Failed to fetch rewards.")
+                        return
+                    rewards = await resp.json()
+            
+            # Find matching reward
+            matches = []
+            for reward in rewards:
+                if reward_name.lower() in reward.get('name', '').lower():
+                    matches.append(reward)
+            
+            if not matches:
+                await ctx.send(f"❌ No reward found matching '{reward_name}'")
+                return
+            
+            if len(matches) > 1:
+                # Multiple matches - show options
+                embed = discord.Embed(
+                    title="🔍 Multiple Matches Found",
+                    description=f"Found {len(matches)} rewards matching '{reward_name}':",
+                    color=0xffa500
+                )
+                for i, reward in enumerate(matches[:5], 1):
+                    embed.add_field(
+                        name=f"{i}. {reward.get('name')}",
+                        value=f"ID: {reward.get('id')} | {reward.get('points_required')} pts",
+                        inline=False
+                    )
+                embed.add_field(
+                    name="Usage",
+                    value="Use the exact name to edit: `!edit_reward \"Exact Name | field | value\"`",
+                    inline=False
+                )
+                await ctx.send(embed=embed)
+                return
+            
+            # Single match found - proceed with update
+            reward = matches[0]
+            reward_id = reward.get('id')
+            old_name = reward.get('name')
+            
+            # Prepare update payload
+            update_payload = {
+                "action": "update-incentive",
+                "incentive_id": reward_id
+            }
+            
+            # Map field names and validate values
+            if field.lower() == 'name':
+                update_payload['name'] = new_value
+            elif field.lower() == 'description':
+                update_payload['description'] = new_value
+            elif field.lower() == 'points':
+                try:
+                    update_payload['points_required'] = int(new_value)
+                except ValueError:
+                    await ctx.send("❌ Points must be a number")
+                    return
+            elif field.lower() == 'category':
+                update_payload['category'] = new_value
+            elif field.lower() == 'sponsor':
+                update_payload['sponsor'] = new_value
+            
+            # Update the reward
+            async with session.post(
+                f"{BACKEND_API_URL}/api/bot/",
+                json=update_payload,
+                headers={"Content-Type": "application/json", "X-Bot-Secret": BOT_SHARED_SECRET},
+            ) as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    await ctx.send(f"❌ Failed to update reward: {text[:200]}")
+                    return
+                data = await resp.json()
+                if not data.get('success'):
+                    await ctx.send(f"❌ Failed to update reward: {data.get('error', 'Unknown error')}")
+                    return
+            
+            embed = discord.Embed(
+                title="✏️ Reward Updated",
+                description=f"Successfully updated **{old_name}**",
+                color=0x00ff00
+            )
+            embed.add_field(name="Field", value=field.title(), inline=True)
+            embed.add_field(name="New Value", value=new_value, inline=True)
+            embed.add_field(name="Reward ID", value=str(reward_id), inline=True)
+            
+            await ctx.send(embed=embed)
+                
+        except Exception as e:
+            await ctx.send(f"❌ Error updating reward: {str(e)}")
+
 async def setup(bot):
     await bot.add_cog(Admin(bot))

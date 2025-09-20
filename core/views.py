@@ -1739,6 +1739,10 @@ class BotIntegrationView(APIView):
       - { "action": "approve-linkedin", "submission_id": int, "points": int, "notes"?: str }
       - { "action": "reject-linkedin", "submission_id": int, "reason"?: str }
       - { "action": "pending-linkedin" }
+      - { "action": "create-incentive", "name": str, "description": str, "points_required": int, "stock_available"?: int, "category"?: str, "sponsor"?: str }
+      - { "action": "delete-incentive", "incentive_id": int }
+      - { "action": "update-incentive", "incentive_id": int, "name"?: str, "description"?: str, "points_required"?: int, "category"?: str, "sponsor"?: str }
+      - { "action": "update-incentive-stock", "incentive_id": int, "stock_count": int }
     """
 
     permission_classes = [permissions.AllowAny]
@@ -1819,6 +1823,14 @@ class BotIntegrationView(APIView):
             return self._pending_linkedin(request)
         if action == "get-streak":
             return self._get_streak(request)
+        if action == "create-incentive":
+            return self._create_incentive(request)
+        if action == "delete-incentive":
+            return self._delete_incentive(request)
+        if action == "update-incentive":
+            return self._update_incentive(request)
+        if action == "update-incentive-stock":
+            return self._update_incentive_stock(request)
 
         return Response({"error": "Unknown action"}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -3050,6 +3062,152 @@ class BotIntegrationView(APIView):
             "last_activity": last_activity,
             "streak_bonus": streak_bonus
         })
+
+    def _create_incentive(self, request):
+        """Create a new incentive/reward"""
+        name = request.data.get("name")
+        description = request.data.get("description")
+        points_required = request.data.get("points_required")
+        stock_available = request.data.get("stock_available", 0)
+        category = request.data.get("category", "other")
+        sponsor = request.data.get("sponsor", "Propel2Excel")
+        
+        if not all([name, description, points_required]):
+            return Response({"error": "name, description, and points_required are required"}, 
+                          status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            incentive = Incentive.objects.create(
+                name=name,
+                description=description,
+                points_required=int(points_required),
+                stock_available=int(stock_available),
+                category=category,
+                sponsor=sponsor,
+                is_active=True
+            )
+            
+            # Clear rewards cache for all users
+            from django.core.cache import cache
+            cache.delete_many(cache.keys('rewards_available_*'))
+            
+            return Response({
+                "success": True,
+                "incentive_id": incentive.id,
+                "name": incentive.name,
+                "message": f"Incentive '{incentive.name}' created successfully"
+            })
+            
+        except Exception as e:
+            return Response({"error": f"Failed to create incentive: {str(e)}"}, 
+                          status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def _delete_incentive(self, request):
+        """Delete an incentive/reward"""
+        incentive_id = request.data.get("incentive_id")
+        
+        if not incentive_id:
+            return Response({"error": "incentive_id is required"}, 
+                          status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            incentive = Incentive.objects.get(id=incentive_id)
+            incentive_name = incentive.name
+            incentive.delete()
+            
+            # Clear rewards cache for all users
+            from django.core.cache import cache
+            cache.delete_many(cache.keys('rewards_available_*'))
+            
+            return Response({
+                "success": True,
+                "message": f"Incentive '{incentive_name}' deleted successfully"
+            })
+            
+        except Incentive.DoesNotExist:
+            return Response({"error": "Incentive not found"}, 
+                          status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({"error": f"Failed to delete incentive: {str(e)}"}, 
+                          status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def _update_incentive(self, request):
+        """Update an incentive/reward"""
+        incentive_id = request.data.get("incentive_id")
+        
+        if not incentive_id:
+            return Response({"error": "incentive_id is required"}, 
+                          status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            incentive = Incentive.objects.get(id=incentive_id)
+            
+            # Update fields if provided
+            if "name" in request.data:
+                incentive.name = request.data["name"]
+            if "description" in request.data:
+                incentive.description = request.data["description"]
+            if "points_required" in request.data:
+                incentive.points_required = int(request.data["points_required"])
+            if "category" in request.data:
+                incentive.category = request.data["category"]
+            if "sponsor" in request.data:
+                incentive.sponsor = request.data["sponsor"]
+            
+            incentive.save()
+            
+            # Clear rewards cache for all users
+            from django.core.cache import cache
+            cache.delete_many(cache.keys('rewards_available_*'))
+            
+            return Response({
+                "success": True,
+                "incentive_id": incentive.id,
+                "name": incentive.name,
+                "message": f"Incentive '{incentive.name}' updated successfully"
+            })
+            
+        except Incentive.DoesNotExist:
+            return Response({"error": "Incentive not found"}, 
+                          status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({"error": f"Failed to update incentive: {str(e)}"}, 
+                          status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    def _update_incentive_stock(self, request):
+        """Update stock count for an incentive/reward"""
+        incentive_id = request.data.get("incentive_id")
+        stock_count = request.data.get("stock_count")
+        
+        if not incentive_id or stock_count is None:
+            return Response({"error": "incentive_id and stock_count are required"}, 
+                          status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            incentive = Incentive.objects.get(id=incentive_id)
+            old_stock = incentive.stock_available
+            incentive.stock_available = int(stock_count)
+            incentive.save()
+            
+            # Clear rewards cache for all users
+            from django.core.cache import cache
+            cache.delete_many(cache.keys('rewards_available_*'))
+            
+            return Response({
+                "success": True,
+                "incentive_id": incentive.id,
+                "name": incentive.name,
+                "old_stock": old_stock,
+                "new_stock": incentive.stock_available,
+                "message": f"Stock updated for '{incentive.name}' from {old_stock} to {incentive.stock_available}"
+            })
+            
+        except Incentive.DoesNotExist:
+            return Response({"error": "Incentive not found"}, 
+                          status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({"error": f"Failed to update stock: {str(e)}"}, 
+                          status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class LinkView(APIView):

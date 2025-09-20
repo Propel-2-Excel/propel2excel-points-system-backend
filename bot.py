@@ -754,6 +754,9 @@ async def adminhelp(ctx):
         embed.add_field(
             name="🎁 Reward Management",
             value="`!rewards` - View all rewards and their status\n"
+                  "`!add_reward <points> <stock> \"<name> | <description> | <category> | <sponsor>\"` - Create new reward\n"
+                  "`!delete_reward <name>` - Delete a reward (with confirmation)\n"
+                  "`!edit_reward \"<name> | <field> | <value>\"` - Edit reward details\n"
                   "`!enable_reward <name>` - Restock a reward (sets to 10)\n"
                   "`!disable_reward <name>` - Make reward out of stock\n"
                   "`!set_stock <amount> <name>` - Set specific stock amount",
